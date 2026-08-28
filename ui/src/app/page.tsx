@@ -43,6 +43,7 @@ import {
 } from "@/components/ui/field";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
 
 import { Separator } from "@/components/ui/separator";
 import {
@@ -124,6 +125,11 @@ export default function HomePage() {
   const [clearing, setClearing] = useState(false);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const imagePreviewRef = useRef<string | null>(null);
+  const [originalImage, setOriginalImage] = useState<{
+    id: string;
+    mimeType: string;
+    base64: string;
+  } | null>(null);
 
   const latestReceived = records.find((r) => r.telemetry !== undefined);
   const textBytes = new TextEncoder().encode(text).byteLength;
@@ -171,6 +177,31 @@ export default function HomePage() {
       clearInterval(interval);
     };
   }, []);
+
+  // Pull the original upload for whichever image the receiver last reported,
+  // so it can be shown next to the reassembled version.
+  const receivedImageId =
+    latestReceived?.type === "image" ? latestReceived.id : null;
+
+  useEffect(() => {
+    if (!receivedImageId) return;
+
+    let cancelled = false;
+    void fetch(`/api/image/${receivedImageId}`, { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok || cancelled) return;
+        const data = (await response.json()) as {
+          image: { mimeType: string; base64: string };
+        };
+        if (!cancelled)
+          setOriginalImage({ id: receivedImageId, ...data.image });
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [receivedImageId]);
 
   async function submit() {
     if (!canSend || fileTooLarge || textTooLarge || textHasNewlines) return;
@@ -491,14 +522,38 @@ export default function HomePage() {
                   ) : latestReceived?.type === "image" ? (
                     <div className="flex flex-col gap-3">
                       {latestReceived.telemetry?.receivedImageBase64 ? (
-                        <Image
-                          src={`data:${latestReceived.mimeType ?? "image/png"};base64,${latestReceived.telemetry.receivedImageBase64}`}
-                          alt="Image reassembled by the receiver"
-                          width={640}
-                          height={480}
-                          unoptimized
-                          className="max-h-56 w-auto rounded-md object-contain"
-                        />
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="flex flex-col gap-1.5">
+                            <p className="text-muted-foreground font-mono text-xs tracking-[0.15em] uppercase">
+                              Sent
+                            </p>
+                            {originalImage?.id === latestReceived.id ? (
+                              <Image
+                                src={`data:${originalImage.mimeType};base64,${originalImage.base64}`}
+                                alt="Original uploaded image"
+                                width={480}
+                                height={480}
+                                unoptimized
+                                className="bg-muted/40 max-h-44 w-full rounded-md object-contain"
+                              />
+                            ) : (
+                              <Skeleton className="h-44 w-full rounded-md" />
+                            )}
+                          </div>
+                          <div className="flex flex-col gap-1.5">
+                            <p className="text-muted-foreground font-mono text-xs tracking-[0.15em] uppercase">
+                              Received
+                            </p>
+                            <Image
+                              src={`data:${latestReceived.mimeType ?? "image/png"};base64,${latestReceived.telemetry.receivedImageBase64}`}
+                              alt="Image reassembled by the receiver"
+                              width={480}
+                              height={480}
+                              unoptimized
+                              className="bg-muted/40 max-h-44 w-full rounded-md object-contain"
+                            />
+                          </div>
+                        </div>
                       ) : (
                         <p className="text-muted-foreground text-sm">
                           Image too large to relay — stats only
@@ -557,32 +612,32 @@ export default function HomePage() {
                 <Card size="sm">
                   <CardContent className="p-3">
                     <p className="text-muted-foreground text-xs">Integrity</p>
-                    {latestReceived?.telemetry ? (
-                      <Badge
-                        variant={
-                          (
-                            latestReceived.type === "text"
-                              ? latestReceived.telemetry.checksumPassed
-                              : latestReceived.telemetry.sha256Passed
-                          )
-                            ? "default"
-                            : "destructive"
-                        }
-                        className="mt-1"
-                      >
-                        {latestReceived.type === "text"
-                          ? latestReceived.telemetry.checksumPassed
-                            ? "CRC pass"
-                            : "CRC fail"
-                          : latestReceived.telemetry.sha256Passed
-                            ? "SHA-256 pass"
-                            : "SHA-256 fail"}
-                      </Badge>
-                    ) : (
-                      <p className="text-muted-foreground mt-1 font-mono font-medium">
-                        —
-                      </p>
-                    )}
+                    {(() => {
+                      // undefined means the check never ran (e.g. image too
+                      // large to buffer) — that is not the same as a failure.
+                      const passed =
+                        latestReceived?.type === "text"
+                          ? latestReceived.telemetry?.checksumPassed
+                          : latestReceived?.telemetry?.sha256Passed;
+                      const label =
+                        latestReceived?.type === "text" ? "CRC" : "SHA-256";
+
+                      if (passed === undefined) {
+                        return (
+                          <p className="text-muted-foreground mt-1 font-mono font-medium">
+                            —
+                          </p>
+                        );
+                      }
+                      return (
+                        <Badge
+                          variant={passed ? "default" : "destructive"}
+                          className="mt-1"
+                        >
+                          {label} {passed ? "pass" : "fail"}
+                        </Badge>
+                      );
+                    })()}
                   </CardContent>
                 </Card>
               </div>

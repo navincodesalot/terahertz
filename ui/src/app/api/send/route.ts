@@ -10,10 +10,12 @@ import {
   MAX_TRANSFER_BYTES,
   UART_BAUD,
   UART_FORMAT,
+  imageKey,
   messageKey,
   sendTextSchema,
   type Command,
   type MessageRecord,
+  type StoredImage,
 } from "@/lib/protocol";
 
 export const runtime = "nodejs";
@@ -187,6 +189,14 @@ async function createImageCommand(request: Request) {
     });
   }
   commands.push({ id, type: "image_end", sha256, timestamp });
+
+  // Keep the original upload so the dashboard can show it beside whatever the
+  // receiver actually reassembles. Expires so Redis doesn't grow unbounded.
+  const original: StoredImage = {
+    mimeType: value.type,
+    base64: bytes.toString("base64"),
+  };
+  await getRedis().set(imageKey(id), original, { ex: 60 * 60 * 24 });
 
   const record: MessageRecord = {
     id,

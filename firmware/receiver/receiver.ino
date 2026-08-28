@@ -3,6 +3,7 @@
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include "mbedtls/sha256.h"
 
 #include "secrets.h"
 #include "../common/optical_protocol.h"
@@ -310,6 +311,7 @@ void loop() {
     const int idEnd = line.indexOf('|', 9);
     if (idEnd < 0) { Serial.println("[ERROR] Invalid image end"); return; }
     const String id          = line.substring(9, idEnd);
+    const String expectedSha = line.substring(idEnd + 1);
     const bool   complete    = receivingImage &&
                                nextImageChunk == expectedImageChunks &&
                                receivedImageBytes == expectedImageBytes;
@@ -329,7 +331,31 @@ void loop() {
     doc["receivedBytes"]  = (uint32_t)receivedImageBytes;
     doc["chunksReceived"] = (uint16_t)nextImageChunk;
     doc["chunksExpected"] = (uint16_t)expectedImageChunks;
-    doc["sha256Passed"]   = false; // SHA-256 check removed for simplicity; add mbedtls if needed
+    // Real SHA-256 over the reassembled bytes, compared against the hash the
+    // sender computed on the original file. Only possible when we actually
+    // buffered the image; otherwise the field is omitted (UI shows "—").
+    if (complete && imageRelayOk && imageData) {
+      uint8_t hash[32];
+      mbedtls_sha256_context ctx;
+      mbedtls_sha256_init(&ctx);
+      mbedtls_sha256_starts(&ctx, 0); // 0 = SHA-256, not SHA-224
+      mbedtls_sha256_update(&ctx, imageData, receivedImageBytes);
+      mbedtls_sha256_finish(&ctx, hash);
+      mbedtls_sha256_free(&ctx);
+
+      char hex[65];
+      for (int i = 0; i < 32; i++) snprintf(hex + i * 2, 3, "%02x", hash[i]);
+      hex[64] = '\0';
+
+      const bool shaOk = (strcmp(hex, expectedSha.c_str()) == 0);
+      doc["sha256Passed"] = shaOk;
+      Serial.printf("[IMAGE] sha256 %s\n", shaOk ? "PASS" : "FAIL");
+      if (!shaOk) {
+        Serial.printf("  expected=%s\n  actual  =%s\n",
+                      expectedSha.c_str(), hex);
+      }
+    }
+
     const uint32_t imgTxMs = (uint32_t)(millis() - imageStartMs);
     doc["transmissionMs"] = imgTxMs;
     doc["bitsPerSecond"]  = (uint32_t)BAUD_RATE;
