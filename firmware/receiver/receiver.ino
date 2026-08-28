@@ -92,6 +92,10 @@ void setup() {
   Serial.println("  TERAHERTZ UART RECEIVER");
   Serial.println("================================\n");
 
+  // A chunk line is ~1400 bytes. The default 256-byte RX buffer overflows
+  // long before the line ends, silently dropping bytes mid-line.
+  // Must be called BEFORE begin().
+  Serial1.setRxBufferSize(2048);
   Serial1.begin(BAUD_RATE, SERIAL_8N1, RECEIVER_PIN, -1, true);
 
   Serial.printf("Connecting to Wi-Fi: %s\n", WIFI_SSID);
@@ -110,7 +114,10 @@ void setup() {
 void loop() {
   if (!Serial1.available()) return;
 
-  String line = Serial1.readStringUntil('\n');
+  // Static so the String keeps its capacity between calls instead of
+  // reallocating from zero on every character of a long line.
+  static String line;
+  line = Serial1.readStringUntil('\n');
   line.trim();
   if (line.length() == 0) return;
 
