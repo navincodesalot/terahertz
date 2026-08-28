@@ -16,6 +16,7 @@ const receiveSchema = z.object({
   chunksReceived: z.number().int().nonnegative().optional(),
   chunksExpected: z.number().int().nonnegative().optional(),
   sha256Passed: z.boolean().optional(),
+  transmissionMs: z.number().int().nonnegative().optional(),
 });
 
 export async function POST(request: Request) {
@@ -59,6 +60,7 @@ export async function POST(request: Request) {
         chunksReceived: parsed.data.chunksReceived,
         chunksExpected: parsed.data.chunksExpected,
         sha256Passed: parsed.data.sha256Passed,
+        transmissionMs: parsed.data.transmissionMs,
       },
     };
 

@@ -84,6 +84,7 @@ export const telemetrySchema = z.object({
   chunksReceived: z.number().int().nonnegative().optional(),
   chunksExpected: z.number().int().nonnegative().optional(),
   sha256Passed: z.boolean().optional(),
+  transmissionMs: z.number().int().nonnegative().optional(),
 });
 
 export const messageRecordSchema = z.object({

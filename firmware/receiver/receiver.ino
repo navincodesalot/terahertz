@@ -10,6 +10,8 @@
 
 #define RECEIVER_PIN 5
 #define BAUD_RATE    250000
+#define TELEMETRY_QUEUE_DEPTH 4
+#define OPTICAL_LINE_OVERHEAD_BYTES 256
 
 // ---------------------------------------------------------------------------
 // Image reassembly state
@@ -23,6 +25,8 @@ uint32_t            receivedImageBytes  = 0;
 bool                receivingImage      = false;
 unsigned long       imageStartMs        = 0;
 mbedtls_sha256_context sha256Ctx;
+QueueHandle_t       telemetryQueue;
+String              rxBuffer;
 
 static uint8_t chunkBuf[IMAGE_CHUNK_BYTES + 4];
 
@@ -48,6 +52,9 @@ void connectWiFi() {
 }
 
 void postTelemetry(const String& body) {
+  // Telemetry is sent once per completed receive. Reconnect here so a brief
+  // Wi-Fi drop does not discard the final result permanently.
+  if (WiFi.status() != WL_CONNECTED) connectWiFi();
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("[TELEMETRY] Wi-Fi not connected; skipping POST");
     return;
@@ -73,6 +80,36 @@ void postTelemetry(const String& body) {
   }
 
   https.end();
+}
+
+void queueTelemetry(const String& body) {
+  if (!telemetryQueue) {
+    Serial.println("[TELEMETRY] Queue unavailable; report dropped");
+    return;
+  }
+
+  String* report = new String(body);
+  if (!report || xQueueSend(telemetryQueue, &report, 0) != pdTRUE) {
+    delete report;
+    Serial.println("[TELEMETRY] Queue full; report dropped");
+  }
+}
+
+// HTTPS is deliberately handled outside the UART loop. Wi-Fi runs in the
+// ESP32 background stack, and this worker performs the blocking POST while
+// loop() remains available to receive optical bytes.
+void telemetryTask(void* parameter) {
+  while (true) {
+    if (WiFi.status() != WL_CONNECTED) connectWiFi();
+
+    String* report = nullptr;
+    if (xQueueReceive(telemetryQueue, &report, pdMS_TO_TICKS(1000)) == pdTRUE) {
+      if (report) {
+        postTelemetry(*report);
+        delete report;
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -145,11 +182,13 @@ static void handleTextLine(const String& line) {
   doc["type"]           = "text";
   doc["receivedBytes"]  = (uint32_t)payload.length();
   doc["checksumPassed"] = checksumPassed;
-  if (checksumPassed) doc["receivedPayload"] = payload;
+  // Preserve the decoded text even when CRC fails so the dashboard can show
+  // what physically arrived, while checksumPassed still marks it untrusted.
+  doc["receivedPayload"] = payload;
 
   String body;
   serializeJson(doc, body);
-  postTelemetry(body);
+  queueTelemetry(body);
 }
 
 // ---------------------------------------------------------------------------
@@ -298,7 +337,7 @@ static void handleImageLine(const String& line) {
     serializeJson(doc, body);
 
     receivingImage = false;
-    postTelemetry(body);
+    queueTelemetry(body);
     return;
   }
 
@@ -354,10 +393,44 @@ void setup() {
 
   Serial1.begin(BAUD_RATE, SERIAL_8N1, RECEIVER_PIN, -1, true);
 
-  connectWiFi();
+  telemetryQueue = xQueueCreate(TELEMETRY_QUEUE_DEPTH, sizeof(String*));
+  if (!telemetryQueue) {
+    Serial.println("[TELEMETRY] Queue allocation failed");
+  } else {
+    // No core pinning: the scheduler keeps this worker separate from the
+    // Arduino UART loop while Wi-Fi/HTTPS are serviced in the background.
+    xTaskCreate(telemetryTask, "Telemetry", 8192, nullptr, 1, nullptr);
+  }
+
   Serial.println("Waiting for optical data...\n");
 }
 
 void loop() {
-  if (Serial1.available()) handleLine(Serial1.readStringUntil('\n'));
+  static size_t bytesSinceYield = 0;
+
+  while (Serial1.available()) {
+    const char c = (char)Serial1.read();
+    if (c == '\n') {
+      if (rxBuffer.length() > 0) handleLine(rxBuffer);
+      rxBuffer = "";
+      bytesSinceYield = 0;
+      continue;
+    }
+
+    rxBuffer += c;
+    if (rxBuffer.length() > MAX_TRANSFER_BYTES + OPTICAL_LINE_OVERHEAD_BYTES) {
+      Serial.println("[ERROR] Optical record exceeds the 250 KB transfer limit");
+      rxBuffer = "";
+      bytesSinceYield = 0;
+      continue;
+    }
+
+    // Keep the Wi-Fi/telemetry task and ESP32 background services schedulable
+    // while a large valid text record is arriving continuously.
+    bytesSinceYield += 1;
+    if (bytesSinceYield >= 256) {
+      yield();
+      bytesSinceYield = 0;
+    }
+  }
 }

@@ -11,7 +11,6 @@ import {
   Send,
   Trash2,
   Upload,
-  X,
 } from "lucide-react";
 
 import {
@@ -35,21 +34,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+
 import {
   Field,
   FieldDescription,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
-import { Progress } from "@/components/ui/progress";
+
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { Separator } from "@/components/ui/separator";
@@ -63,6 +55,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { MAX_TRANSFER_BYTES } from "@/lib/protocol";
+import { toast } from "sonner";
 
 type MessageType = "text" | "image";
 type Status = "idle" | "sending" | "published" | "success" | "failed";
@@ -74,6 +67,7 @@ type Telemetry = {
   chunksReceived?: number;
   chunksExpected?: number;
   sha256Passed?: boolean;
+  transmissionMs?: number;
 };
 
 type RecordItem = {
@@ -94,7 +88,7 @@ type SendResult = { command?: RecordItem; error?: string };
 const statusCopy: Record<Status, string> = {
   idle: "Ready to transmit",
   sending: "Publishing command",
-  published: "Awaiting receiver",
+  published: "Published · waiting for receiver",
   success: "Transmission confirmed",
   failed: "Transmission failed",
 };
@@ -124,7 +118,6 @@ export default function HomePage() {
   const [records, setRecords] = useState<RecordItem[]>([]);
   const [status, setStatus] = useState<Status>("idle");
   const [notice, setNotice] = useState("");
-  const [popupOpen, setPopupOpen] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
@@ -181,7 +174,10 @@ export default function HomePage() {
     if (!canSend || fileTooLarge || textTooLarge || textHasNewlines) return;
     setStatus("sending");
     setNotice("");
-    setPopupOpen(true);
+    toast.loading("Publishing command", {
+      id: "transmission",
+      description: "Sending the command to the persistent ESP32 subscriber.",
+    });
 
     const request =
       type === "image"
@@ -202,6 +198,11 @@ export default function HomePage() {
       if (!response.ok || !data.command)
         throw new Error(data.error ?? "The command could not be published");
       setStatus("published");
+      toast.success("Command published", {
+        id: "transmission",
+        description:
+          "The optical sender is listening. Waiting for receiver telemetry.",
+      });
       setRecords((current) => [
         data.command!,
         ...current.filter((item) => item.id !== data.command!.id),
@@ -215,6 +216,13 @@ export default function HomePage() {
       setFile(null);
     } catch (error) {
       setStatus("failed");
+      toast.error("Command failed", {
+        id: "transmission",
+        description:
+          error instanceof Error
+            ? error.message
+            : "The command could not be published",
+      });
       setNotice(
         error instanceof Error
           ? error.message
@@ -407,6 +415,18 @@ export default function HomePage() {
               </FieldGroup>
             </CardContent>
             <CardFooter className="flex-col items-stretch gap-4">
+              {status !== "idle" && (
+                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+                  <span className="text-sm">{statusCopy[status]}</span>
+                  <Badge
+                    variant={statusVariant(
+                      status === "sending" ? "published" : status,
+                    )}
+                  >
+                    {status === "sending" ? "working" : status}
+                  </Badge>
+                </div>
+              )}
               <div className="text-muted-foreground flex items-center justify-between text-xs">
                 <span>{inputSummary}</span>
                 <span className="font-mono">UART · 250000 · 8N1</span>
@@ -463,7 +483,7 @@ export default function HomePage() {
                 <ScrollArea className="mt-8 max-h-72">
                   {latestReceived?.type === "text" &&
                   latestReceived.telemetry?.receivedPayload ? (
-                    <p className="pr-3 text-2xl leading-relaxed break-words whitespace-pre-wrap">
+                    <p className="pr-3 text-2xl leading-relaxed wrap-break-word whitespace-pre-wrap">
                       {latestReceived.telemetry.receivedPayload}
                     </p>
                   ) : latestReceived?.type === "image" ? (
@@ -504,7 +524,7 @@ export default function HomePage() {
                   )}
                 </p>
               </div>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <Card size="sm">
                   <CardContent className="p-3">
                     <p className="text-muted-foreground text-xs">Baud</p>
@@ -515,6 +535,16 @@ export default function HomePage() {
                   <CardContent className="p-3">
                     <p className="text-muted-foreground text-xs">Format</p>
                     <p className="mt-1 font-mono font-medium">8N1</p>
+                  </CardContent>
+                </Card>
+                <Card size="sm">
+                  <CardContent className="p-3">
+                    <p className="text-muted-foreground text-xs">Duration</p>
+                    <p className="mt-1 font-mono font-medium">
+                      {latestReceived?.telemetry?.transmissionMs !== undefined
+                        ? `${latestReceived.telemetry.transmissionMs} ms`
+                        : "—"}
+                    </p>
                   </CardContent>
                 </Card>
                 <Card size="sm">
@@ -665,48 +695,6 @@ export default function HomePage() {
           </CardContent>
         </Card>
       </div>
-
-      <Dialog open={popupOpen} onOpenChange={setPopupOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-3">
-              <span className="bg-primary text-primary-foreground flex size-9 items-center justify-center rounded-full">
-                <Radio
-                  className={status === "sending" ? "animate-pulse" : ""}
-                />
-              </span>
-              {statusCopy[status]}
-            </DialogTitle>
-            <DialogDescription>
-              {status === "published"
-                ? "The command is live on Redis Pub/Sub. The receiver will confirm the optical checksum when telemetry is connected."
-                : status === "failed"
-                  ? notice
-                  : "Preparing the command for the persistent optical link."}
-            </DialogDescription>
-          </DialogHeader>
-          <Progress
-            value={
-              status === "sending"
-                ? 30
-                : status === "published"
-                  ? 65
-                  : status === "success"
-                    ? 100
-                    : 0
-            }
-          />
-          <div className="text-muted-foreground flex justify-between text-xs">
-            <span>Queued</span>
-            <span>Published</span>
-            <span>Verified</span>
-          </div>
-          <DialogClose render={<Button variant="outline" className="w-full" />}>
-            <X data-icon="inline-start" />
-            Close
-          </DialogClose>
-        </DialogContent>
-      </Dialog>
     </main>
   );
 }
