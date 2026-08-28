@@ -11,15 +11,33 @@
 #define BAUD_RATE 230400
 #define REDIS_CHANNEL "laser_commands"
 #define REDIS_RECONNECT_MS 5000
-#define MAX_OPTICAL_TEXT_BYTES 2048
-#define IMAGE_CHUNK_BUFFER_BYTES 2048
+#define MAX_OPTICAL_TEXT_BYTES OPTICAL_MAX_PAYLOAD
+#define IMAGE_CHUNK_BUFFER_BYTES OPTICAL_MAX_PAYLOAD
+#define IMAGE_PROGRESS_LOG_INTERVAL 32
+// Queue a whole frame ahead of the wire so the UART never idles between the
+// header and the payload.
+#define TX_BUFFER_BYTES (OPTICAL_MAX_FRAME + 256)
 
 WiFiClientSecure redisClient;
 unsigned long nextRedisAttempt = 0;
 
 uint8_t imageChunkBuffer[IMAGE_CHUNK_BUFFER_BYTES];
+uint8_t opticalFrame[OPTICAL_MAX_FRAME];
 uint16_t expectedImageChunks = 0;
 JsonDocument commandDocument;
+
+// One contiguous write instead of a dozen individually locked byte writes,
+// then block until the frame has physically left the UART. That flush is the
+// backpressure that keeps the TCP receive window closed while the laser is
+// busy, which is what paces the whole transfer.
+bool sendOpticalFrame(OpticalFrameType type, uint16_t sequence,
+                      const uint8_t* payload, uint16_t length) {
+  const size_t frameLength = opticalBuildFrame(opticalFrame, type, sequence, payload, length);
+  if (frameLength == 0) return false;
+  Serial1.write(opticalFrame, frameLength);
+  Serial1.flush();
+  return true;
+}
 
 void sendOpticalText(const String& payload) {
   if (payload.length() == 0 || payload.length() > MAX_OPTICAL_TEXT_BYTES) {
@@ -27,9 +45,14 @@ void sendOpticalText(const String& payload) {
     return;
   }
 
-  writeOpticalFrame(Serial1, FRAME_TEXT, 0, (const uint8_t*)payload.c_str(), payload.length());
-  Serial1.flush();
-  Serial.printf("UART frame sent: TEXT, %u bytes\n", payload.length());
+  const unsigned long startedAt = millis();
+  if (!sendOpticalFrame(FRAME_TEXT, 0, (const uint8_t*)payload.c_str(),
+                        (uint16_t)payload.length())) {
+    Serial.println("[REJECTED] Text frame could not be built");
+    return;
+  }
+  Serial.printf("UART frame sent: TEXT %u bytes in %lums\n",
+                (unsigned)payload.length(), millis() - startedAt);
 }
 
 int base64Value(char value) {
@@ -73,26 +96,28 @@ void sendImageCommand(JsonDocument& document) {
 
   if (strcmp(type, "image_chunk") == 0) {
     const size_t decoded = decodeBase64(document["data"] | "", imageChunkBuffer, sizeof(imageChunkBuffer));
-    if (decoded == 0 || !writeOpticalFrame(Serial1, FRAME_IMAGE_CHUNK, sequence, imageChunkBuffer, decoded)) {
+    if (decoded == 0 ||
+        !sendOpticalFrame(FRAME_IMAGE_CHUNK, sequence, imageChunkBuffer, (uint16_t)decoded)) {
       Serial.println("[REJECTED] Image chunk is too large or invalid");
       return;
     }
-    // Do not accept the next Redis message until this frame has left the UART.
-    // At this baud a 1 KB frame takes roughly 45 ms on the wire.
-    Serial1.flush();
-    Serial.printf("UART frame sent: IMAGE_CHUNK index=%u/%u bytes=%u\n",
-                  sequence, expectedImageChunks, decoded);
+    // USB logging costs ~4 ms per line at 115200 and sits in the hot path, so
+    // only report periodically.
+    if (sequence % IMAGE_PROGRESS_LOG_INTERVAL == 0 || sequence + 1 == expectedImageChunks) {
+      Serial.printf("UART frame sent: IMAGE_CHUNK %u/%u bytes=%u\n", sequence,
+                    expectedImageChunks, (unsigned)decoded);
+    }
     return;
   }
 
   String metadata;
   serializeJson(document, metadata);
   const OpticalFrameType frameType = strcmp(type, "image_start") == 0 ? FRAME_IMAGE_START : FRAME_IMAGE_END;
-  if (!writeOpticalFrame(Serial1, frameType, sequence, (const uint8_t*)metadata.c_str(), metadata.length())) {
+  if (!sendOpticalFrame(frameType, sequence, (const uint8_t*)metadata.c_str(),
+                        (uint16_t)metadata.length())) {
     Serial.println("[REJECTED] Image metadata is too large");
     return;
   }
-  Serial1.flush();
   Serial.printf("UART frame sent: %s\n", type);
   if (strcmp(type, "image_end") == 0) {
     expectedImageChunks = 0;
@@ -110,7 +135,9 @@ void handleCommand(const String& json) {
 
   const char* id = document["id"] | "unknown";
   const char* type = document["type"] | "";
-  Serial.printf("Redis message received: id=%s type=%s\n", id, type);
+  if (strcmp(type, "image_chunk") != 0) {
+    Serial.printf("Redis message received: id=%s type=%s\n", id, type);
+  }
 
   if (strcmp(type, "text") == 0) {
     sendOpticalText(document["payload"].as<String>());
@@ -192,6 +219,7 @@ void setup() {
   delay(1000);
   Serial.println("\nTERAHERTZ CLOUD COMMAND SENDER");
 
+  Serial1.setTxBufferSize(TX_BUFFER_BYTES);
   Serial1.begin(BAUD_RATE, SERIAL_8N1, -1, LASER_PIN, true);
   connectWiFi();
 }

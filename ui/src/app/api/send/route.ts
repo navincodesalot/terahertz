@@ -18,9 +18,13 @@ import {
 
 export const runtime = "nodejs";
 
-// Keep the Redis burst below the sender's optical UART throughput.
-const IMAGE_PUBLISH_BATCH_SIZE = 1;
-const IMAGE_PUBLISH_GAP_MS = 75;
+// The sender blocks on Serial1.flush() after every frame, so it stops reading
+// its Redis socket while the laser is busy and TCP flow control paces the
+// transfer for us. Publishing is therefore a straight burst; the only reason
+// to batch is Upstash's per-request size limit. Artificially delaying here
+// throttled the link far below line rate and pushed large images past the
+// serverless function's duration limit.
+const IMAGE_PUBLISH_BATCH_SIZE = 64;
 
 async function persistAndPublish(
   commandId: string,
@@ -33,19 +37,19 @@ async function persistAndPublish(
   await redis.zadd(HISTORY_KEY, { score: timestamp, member: commandId });
 
   try {
-    const batchSize = commands.length > 1 ? IMAGE_PUBLISH_BATCH_SIZE : 1;
-    for (let start = 0; start < commands.length; start += batchSize) {
+    for (
+      let start = 0;
+      start < commands.length;
+      start += IMAGE_PUBLISH_BATCH_SIZE
+    ) {
       const pipeline = redis.pipeline();
-      const batch = commands.slice(start, start + batchSize);
-      for (const command of batch) {
+      for (const command of commands.slice(
+        start,
+        start + IMAGE_PUBLISH_BATCH_SIZE,
+      )) {
         pipeline.publish(COMMAND_CHANNEL, JSON.stringify(command));
       }
       await pipeline.exec();
-      if (start + batchSize < commands.length) {
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, IMAGE_PUBLISH_GAP_MS);
-        });
-      }
     }
   } catch (error) {
     const failedRecord: MessageRecord = {

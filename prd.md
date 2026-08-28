@@ -132,22 +132,30 @@ The final `true` inverts the UART signal so that the electrical/laser line idles
 
 This is important because an idle-high UART would otherwise leave the laser continuously ON.
 
-The cloud integration uses a shared binary-safe optical frame envelope:
+The cloud integration uses a shared binary-safe optical frame envelope (version 2):
 
 ```text
-[magic][version][type][sequence][payload length][CRC32][payload]
+[0x55 0x55][magic][version][type][sequence][payload length][CRC32][header check][scrambled payload]
 ```
 
-The sender emits one frame at a time over the existing inverted hardware UART. The receiver must:
+The two `0x55` preamble bytes produce a clean square wave that lets an AC-coupled photodiode front end settle before the first real bit.
 
-1. synchronize on the frame magic bytes
-2. validate the protocol version and payload length
-3. read the sequence, CRC32, and payload
-4. calculate and compare CRC32
-5. reject corrupt or oversized frames
+The header check byte is a rotate-xor over the preceding twelve header bytes. Without it a single corrupted length byte makes the receiver consume the frames that follow it, turning one bit error into a multi-frame outage.
+
+The payload is whitened with a fixed LFSR keystream. Image data contains long runs of `0x00` and `0xFF`; over an inverted UART those runs hold the laser at a 90% or 10% duty cycle, which drags an AC-coupled comparator threshold off centre. Whitening keeps the duty cycle near 50% and costs zero bytes on the wire. Only the payload is scrambled, so the magic bytes stay searchable for resynchronisation.
+
+The sender emits one frame at a time over the existing inverted hardware UART. The receiver runs a non-blocking sliding-window parser:
+
+1. shift each incoming byte into a 13-byte window and re-test the header
+2. validate magic, protocol version, frame type, payload length, and header check
+3. read exactly `payload length` bytes, bounded by a payload timeout
+4. descramble, then calculate and compare CRC32
+5. discard corrupt frames without consuming any of the next frame
 6. dispatch valid text/image-start/image-chunk/image-end frames
 
-CRC32 protects each optical frame. Image-level SHA-256 verification, missing/duplicate chunk detection, and reassembly are receiver-layer work that remains to be implemented.
+Because the window advances one byte at a time, a false magic match or a corrupt header costs zero bytes of the following frame.
+
+CRC32 protects each optical frame and SHA-256 verifies the reassembled image. There is no partial-image tolerance: a CRC failure, sequence gap, or byte overrun fails the whole image session, which then stays quiet until `image_end` reports the result. Repair requires retransmission, which is not implemented.
 
 The cloud layer feeds jobs into this existing hardware UART path rather than changing the laser driver or physical circuit.
 

@@ -4,8 +4,10 @@ export const COMMAND_CHANNEL = "laser_commands" as const;
 export const MESSAGE_KEY_PREFIX = "message:" as const;
 export const HISTORY_KEY = "transmission_history" as const;
 export const MAX_IMAGE_BYTES = 500 * 1024;
-// Smaller optical chunks limit the impact of a single corrupted UART frame.
-export const IMAGE_CHUNK_BYTES = 512;
+// A corrupted frame fails the whole image either way, so chunk size only
+// trades per-frame overhead against RAM. 1 KB keeps framing overhead at ~1.5%
+// while staying inside the sender's 2 KB optical payload limit.
+export const IMAGE_CHUNK_BYTES = 1024;
 export const UART_BAUD = 230400;
 export const UART_FORMAT = "8N1";
 
@@ -16,7 +18,12 @@ export const sendTextSchema = z.object({
   payload: z
     .string()
     .min(1, "Payload must not be empty")
-    .max(MAX_TEXT_BYTES, "Payload must be 32 KB or smaller"),
+    // The sender measures the UTF-8 encoding, not the character count, and
+    // silently drops anything past its optical payload limit.
+    .refine(
+      (value) => new TextEncoder().encode(value).length <= MAX_TEXT_BYTES,
+      "Payload must be 2 KB or smaller once UTF-8 encoded",
+    ),
 });
 
 export const textCommandSchema = z.object({

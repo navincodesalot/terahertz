@@ -216,7 +216,11 @@ Each phase below must leave the repository in a buildable state and have an expl
 
 ## Current status
 
-The command path is now stable enough to proceed to receiver validation. Keep the sender and receiver at `230400` baud for these integration tests; baud-rate changes belong in Phase 10 after receiver validation. Image data is streamed immediately as each Redis command arrives, not buffered until `image_end`, using 512-byte chunks and one paced publish at a time. The sender applies UART backpressure with `Serial1.flush()`. The receiver validates and reassembles locally, reporting text and image verification over USB serial; it does not yet post telemetry to Vercel.
+The command path is now stable enough to proceed to receiver validation. Keep the sender and receiver at `230400` baud for these integration tests; baud-rate changes belong in Phase 10 after receiver validation. Image data is streamed immediately as each Redis command arrives, not buffered until `image_end`, using 1 KB chunks.
+
+There is no artificial publish pacing. The sender blocks on `Serial1.flush()` after every frame, so it stops reading its Redis socket while the laser is busy and TCP flow control paces the transfer at line rate. Batching in `/api/send` exists only to stay under Upstash's per-request size limit. The earlier fixed 75 ms gap per 512-byte chunk throttled the link to roughly 20% of line rate and pushed large images past the serverless function's duration limit.
+
+The receiver validates and reassembles locally, reporting text and image verification plus measured throughput over USB serial; it does not yet post telemetry to Vercel.
 
 - [x] PRD reviewed.
 - [x] Existing sender and receiver firmware reviewed.
@@ -234,6 +238,7 @@ The command path is now stable enough to proceed to receiver validation. Keep th
 - [x] Phase 8 server-side image validation/chunk command generation implemented.
 - [x] Phase 8 sender-side image streaming verified through `image_start`, ordered chunks, and `image_end`.
 - [x] Binary-safe UART frame protocol implemented for text/image frames with per-frame CRC32.
+- [x] Frame protocol v2: preamble, header check byte, payload whitening, and a non-blocking sliding-window receiver parser.
 - [x] Arduino sketches reorganized into separate `sender/` and `receiver/` sketch folders.
 - [x] Shared protocol header placed in `firmware/common/`.
 - [x] Flash and verify ESP32-S3 sender over USB serial.
