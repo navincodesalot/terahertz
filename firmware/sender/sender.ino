@@ -80,6 +80,10 @@ void sendImageCommand(JsonDocument& document) {
     line += '|';
     line += crcHex;
     Serial1.println(line);
+    // Brief gap so the receiver finishes readStringUntil('\n') and clears
+    // its buffer before the next chunk arrives. Without this, back-to-back
+    // chunks merge into one line when the optical \n is clocked too fast.
+    delay(5);
     Serial.printf("UART image chunk: index=%u/%u crc=%s\n",
                   sequence, expectedImageChunks, crcHex);
     return;

@@ -68,6 +68,7 @@ type Telemetry = {
   chunksExpected?: number;
   sha256Passed?: boolean;
   transmissionMs?: number;
+  bitsPerSecond?: number;
 };
 
 type RecordItem = {
@@ -429,7 +430,7 @@ export default function HomePage() {
               )}
               <div className="text-muted-foreground flex items-center justify-between text-xs">
                 <span>{inputSummary}</span>
-                <span className="font-mono">UART · 250000 · 8N1</span>
+                <span className="font-mono">UART · 0.25 Mbps · 8N1</span>
               </div>
               <Button
                 size="lg"
@@ -524,17 +525,11 @@ export default function HomePage() {
                   )}
                 </p>
               </div>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="grid grid-cols-3 gap-3">
                 <Card size="sm">
                   <CardContent className="p-3">
-                    <p className="text-muted-foreground text-xs">Baud</p>
-                    <p className="mt-1 font-mono font-medium">250000</p>
-                  </CardContent>
-                </Card>
-                <Card size="sm">
-                  <CardContent className="p-3">
-                    <p className="text-muted-foreground text-xs">Format</p>
-                    <p className="mt-1 font-mono font-medium">8N1</p>
+                    <p className="text-muted-foreground text-xs">Speed</p>
+                    <p className="mt-1 font-mono font-medium">0.25 Mbps</p>
                   </CardContent>
                 </Card>
                 <Card size="sm">
@@ -550,33 +545,32 @@ export default function HomePage() {
                 <Card size="sm">
                   <CardContent className="p-3">
                     <p className="text-muted-foreground text-xs">Integrity</p>
-                    <p
-                      className={`mt-1 font-mono font-medium ${
-                        latestReceived?.type === "text"
-                          ? latestReceived.telemetry?.checksumPassed
-                            ? "text-primary"
-                            : "text-destructive"
-                          : latestReceived?.type === "image"
-                            ? latestReceived.telemetry?.sha256Passed
-                              ? "text-primary"
-                              : "text-destructive"
-                            : ""
-                      }`}
-                    >
-                      {latestReceived?.type === "text"
-                        ? latestReceived.telemetry?.checksumPassed
-                          ? "CRC ✓"
-                          : latestReceived.telemetry
-                            ? "CRC ✗"
-                            : "—"
-                        : latestReceived?.type === "image"
-                          ? latestReceived.telemetry?.sha256Passed
-                            ? "SHA-256 ✓"
-                            : latestReceived.telemetry
-                              ? "SHA-256 ✗"
-                              : "—"
-                          : "—"}
-                    </p>
+                    {latestReceived?.telemetry ? (
+                      <Badge
+                        variant={
+                          (
+                            latestReceived.type === "text"
+                              ? latestReceived.telemetry.checksumPassed
+                              : latestReceived.telemetry.sha256Passed
+                          )
+                            ? "default"
+                            : "destructive"
+                        }
+                        className="mt-1"
+                      >
+                        {latestReceived.type === "text"
+                          ? latestReceived.telemetry.checksumPassed
+                            ? "CRC pass"
+                            : "CRC fail"
+                          : latestReceived.telemetry.sha256Passed
+                            ? "SHA-256 pass"
+                            : "SHA-256 fail"}
+                      </Badge>
+                    ) : (
+                      <p className="text-muted-foreground mt-1 font-mono font-medium">
+                        —
+                      </p>
+                    )}
                   </CardContent>
                 </Card>
               </div>
