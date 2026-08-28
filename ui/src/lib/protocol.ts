@@ -6,7 +6,7 @@ export const HISTORY_KEY = "transmission_history" as const;
 export const MAX_IMAGE_BYTES = 500 * 1024;
 // Keep the JSON/base64 Pub/Sub message comfortably below Arduino-Redis read limits.
 export const IMAGE_CHUNK_BYTES = 1024;
-export const UART_BAUD = 250000;
+export const UART_BAUD = 230400;
 export const UART_FORMAT = "8N1";
 
 const MAX_TEXT_BYTES = 32 * 1024;

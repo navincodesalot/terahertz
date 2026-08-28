@@ -8,7 +8,7 @@
 #include "../common/optical_protocol.h"
 
 #define LASER_PIN 4
-#define BAUD_RATE 250000
+#define BAUD_RATE 230400
 #define REDIS_CHANNEL "laser_commands"
 #define REDIS_RECONNECT_MS 5000
 #define MAX_OPTICAL_TEXT_BYTES 2048
@@ -78,7 +78,7 @@ void sendImageCommand(JsonDocument& document) {
       return;
     }
     // Do not accept the next Redis message until this frame has left the UART.
-    // At 250000 baud a 1 KB frame takes roughly 40 ms on the wire.
+    // At this baud a 1 KB frame takes roughly 45 ms on the wire.
     Serial1.flush();
     Serial.printf("UART frame sent: IMAGE_CHUNK index=%u/%u bytes=%u\n",
                   sequence, expectedImageChunks, decoded);

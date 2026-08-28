@@ -48,6 +48,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Progress } from "@/components/ui/progress";
+import { UART_BAUD } from "@/lib/protocol";
 import { toast } from "sonner";
 
 import { Separator } from "@/components/ui/separator";
@@ -339,7 +340,7 @@ export default function HomePage() {
             <CardFooter className="flex-col items-stretch gap-4">
               <div className="text-muted-foreground flex items-center justify-between text-xs">
                 <span>{inputSummary}</span>
-                <span className="font-mono">UART · 250000 · 8N1</span>
+                <span className="font-mono">UART · {UART_BAUD} · 8N1</span>
               </div>
               <Button
                 size="lg"
@@ -405,7 +406,7 @@ export default function HomePage() {
                 <Card size="sm">
                   <CardContent className="p-3">
                     <p className="text-muted-foreground text-xs">Baud</p>
-                    <p className="mt-1 font-mono font-medium">250000</p>
+                    <p className="mt-1 font-mono font-medium">{UART_BAUD}</p>
                   </CardContent>
                 </Card>
                 <Card size="sm">

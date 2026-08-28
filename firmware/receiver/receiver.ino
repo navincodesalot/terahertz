@@ -5,7 +5,7 @@
 #include "../common/optical_protocol.h"
 
 #define RECEIVER_PIN 5
-#define BAUD_RATE 250000
+#define BAUD_RATE 230400
 #define FRAME_TIMEOUT_MS 2000
 
 // Set to 1 when a serial capture of the received image is needed. The output
@@ -43,7 +43,7 @@ uint32_t readU32(const uint8_t* bytes) {
 void resetImageState() {
   mbedtls_sha256_free(&imageHash);
   mbedtls_sha256_init(&imageHash);
-  mbedtls_sha256_starts_ret(&imageHash, 0);
+  mbedtls_sha256_starts(&imageHash, 0);
   imageActive = false;
   expectedChunks = 0;
   nextChunk = 0;
@@ -129,7 +129,7 @@ void handleImageChunk(uint16_t sequence, const uint8_t* payload, uint16_t length
     return;
   }
 
-  mbedtls_sha256_update_ret(&imageHash, payload, length);
+  mbedtls_sha256_update(&imageHash, payload, length);
   receivedBytes += length;
   nextChunk++;
   printBase64(payload, length);
@@ -151,7 +151,7 @@ void handleImageEnd(const uint8_t* payload, uint16_t length) {
   const bool sizeValid = receivedBytes == expectedBytes;
   const bool countValid = nextChunk == expectedChunks;
   uint8_t actualDigest[32];
-  mbedtls_sha256_finish_ret(&imageHash, actualDigest);
+  mbedtls_sha256_finish(&imageHash, actualDigest);
 
   char actualHex[65];
   for (uint8_t index = 0; index < 32; index++) {
