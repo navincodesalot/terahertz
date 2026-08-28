@@ -4,12 +4,12 @@ export const COMMAND_CHANNEL = "laser_commands" as const;
 export const MESSAGE_KEY_PREFIX = "message:" as const;
 export const HISTORY_KEY = "transmission_history" as const;
 export const MAX_IMAGE_BYTES = 500 * 1024;
-// Keep the JSON/base64 Pub/Sub message comfortably below Arduino-Redis read limits.
-export const IMAGE_CHUNK_BYTES = 1024;
+// Smaller optical chunks limit the impact of a single corrupted UART frame.
+export const IMAGE_CHUNK_BYTES = 512;
 export const UART_BAUD = 230400;
 export const UART_FORMAT = "8N1";
 
-const MAX_TEXT_BYTES = 32 * 1024;
+const MAX_TEXT_BYTES = 2048;
 
 export const sendTextSchema = z.object({
   type: z.literal("text").default("text"),

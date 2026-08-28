@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import {
   Check,
@@ -71,6 +72,7 @@ type RecordItem = {
   type: MessageType;
   payload?: string;
   fileName?: string;
+  mimeType?: string;
   inputBytes: number;
   status: "queued" | "published" | "failed" | "success";
   timestamp: number;
@@ -117,6 +119,10 @@ export default function HomePage() {
   const [clearingHistory, setClearingHistory] = useState(false);
 
   const latest = records[0];
+  const latestImageSrc =
+    latest?.type === "image" && latest.payload?.startsWith("data:image/")
+      ? latest.payload
+      : null;
   const canSend = type === "text" ? text.trim().length > 0 : file !== null;
   const fileTooLarge = file !== null && file.size > MAX_IMAGE_BYTES;
   const inputSummary = useMemo(() => {
@@ -293,7 +299,7 @@ export default function HomePage() {
                       rows={8}
                     />
                     <FieldDescription>
-                      UTF-8 text · maximum 32 KB at the cloud boundary.
+                      UTF-8 text · maximum 2 KB per optical frame.
                     </FieldDescription>
                   </Field>
                 ) : (
@@ -387,9 +393,29 @@ export default function HomePage() {
                 <p className="text-muted-foreground font-mono text-xs tracking-[0.2em] uppercase">
                   Optical output
                 </p>
-                <p className="mt-8 text-2xl leading-relaxed break-words">
-                  {latest?.payload ?? "Waiting for the receiver ESP32..."}
-                </p>
+                {latest?.type === "image" ? (
+                  <div className="mt-5 flex max-h-72 min-h-40 items-center justify-center overflow-auto rounded-md border bg-black/20 p-3">
+                    {latestImageSrc ? (
+                      <Image
+                        src={latestImageSrc}
+                        alt={latest.fileName ?? "Received optical image"}
+                        width={640}
+                        height={480}
+                        unoptimized
+                        className="max-h-64 max-w-full object-contain"
+                      />
+                    ) : (
+                      <p className="text-muted-foreground max-w-sm text-center text-sm">
+                        {latest.fileName ?? "Image"} received. The preview will
+                        appear when receiver image bytes are connected.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="mt-5 max-h-56 overflow-y-auto pr-2 text-lg leading-relaxed break-words whitespace-pre-wrap">
+                    {latest?.payload ?? "Waiting for the receiver ESP32..."}
+                  </p>
+                )}
                 <p className="text-muted-foreground mt-8 flex items-center gap-2 text-sm">
                   {latest ? (
                     <>

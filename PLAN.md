@@ -8,7 +8,7 @@ This is the working source of truth for the Phase 2 cloud integration. Update th
 - [x] Use Upstash Redis standard Pub/Sub for the ESP32 command channel.
 - [x] Use the `laser_commands` channel.
 - [x] Keep the ESP32-S3 sender subscribed persistently; do not use polling.
-- [x] Keep the current optical baud at `250000` for now.
+- [x] Keep the current optical baud at `230400` for now.
 - [x] Replace the text-only optical envelope with the shared binary-safe UART frame protocol.
 - [x] Use environment variables for Upstash credentials; never commit secrets.
 - [x] Add firmware integration only after the cloud/application contract is working end-to-end.
@@ -114,7 +114,7 @@ Each phase below must leave the repository in a buildable state and have an expl
 - [x] Parse and validate the Phase 2 command schema within bounded memory.
 - [x] Initially print received commands to USB serial.
 - [x] Then dispatch `type: "text"` to a dedicated optical transmission function.
-- [x] Preserve the current inverted `Serial1`, GPIO 4, `SERIAL_8N1`, and `250000` baud settings.
+- [x] Preserve the current inverted `Serial1`, GPIO 4, `SERIAL_8N1`, and `230400` baud settings.
 - [x] Use binary-safe UART frames with CRC32 for text and image data.
 - [x] Avoid large `String` allocations and unbounded payload buffering on the ESP32.
 
@@ -212,17 +212,17 @@ Each phase below must leave the repository in a buildable state and have an expl
 - [ ] Authentication/authorization architecture beyond protecting environment secrets.
 - [ ] Browser realtime streaming and progressive physical receive updates.
 - [ ] Redis Streams/job recovery until live Pub/Sub is proven.
-- [ ] Higher baud-rate optimization beyond the current `250000` setting.
+- [ ] Higher baud-rate optimization beyond the current `230400` setting.
 
 ## Current status
 
-The command path is now stable enough to proceed to receiver validation. Keep the sender and receiver at `250000` baud for these integration tests; baud-rate changes belong in Phase 10 after receiver validation. Image data is streamed immediately as each Redis command arrives, not buffered until `image_end`. The sender applies UART backpressure with `Serial1.flush()` and the server publishes in small paced batches. The receiver currently validates and reassembles locally, reporting text and image verification over USB serial; it does not yet post telemetry to Vercel.
+The command path is now stable enough to proceed to receiver validation. Keep the sender and receiver at `230400` baud for these integration tests; baud-rate changes belong in Phase 10 after receiver validation. Image data is streamed immediately as each Redis command arrives, not buffered until `image_end`, using 512-byte chunks and one paced publish at a time. The sender applies UART backpressure with `Serial1.flush()`. The receiver validates and reassembles locally, reporting text and image verification over USB serial; it does not yet post telemetry to Vercel.
 
 - [x] PRD reviewed.
 - [x] Existing sender and receiver firmware reviewed.
 - [x] Existing Next.js/shadcn application reviewed.
 - [x] ESP32-S3 target confirmed.
-- [x] Current `250000` baud confirmed for now.
+- [x] Current `230400` baud confirmed for now.
 - [x] Firmware adapter implemented for ESP32-S3 and sender hardware-tested; receiver hardware verification remains.
 - [x] Phase 0 implementation complete.
 - [x] Phase 1 implementation complete except retry idempotency hardening.

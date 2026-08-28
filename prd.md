@@ -98,11 +98,11 @@ The previous 100 pF TIA feedback capacitor was reduced to 10 pF because it exces
 * MAX941 comparator
 * Hardware UART
 * 115200 baud = earlier reliability baseline
-* 250000 baud = current cloud-integration setting; now being validated with paced streaming
+* 230400 baud = current cloud-integration setting; now being validated with paced streaming
 
 For the current cloud integration, use:
 
-**250000 baud.**
+**230400 baud.**
 
 Keep this setting fixed while implementing receiver validation. Re-test at 115200 only if the physical optical link proves unreliable; do not change baud and cloud behavior in the same experiment.
 

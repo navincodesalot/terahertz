@@ -12,7 +12,7 @@
 #define REDIS_CHANNEL "laser_commands"
 #define REDIS_RECONNECT_MS 5000
 #define MAX_OPTICAL_TEXT_BYTES 2048
-#define IMAGE_CHUNK_BUFFER_BYTES 4096
+#define IMAGE_CHUNK_BUFFER_BYTES 2048
 
 WiFiClientSecure redisClient;
 unsigned long nextRedisAttempt = 0;

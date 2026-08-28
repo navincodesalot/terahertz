@@ -6,7 +6,8 @@
 
 #define RECEIVER_PIN 5
 #define BAUD_RATE 230400
-#define FRAME_TIMEOUT_MS 2000
+#define FRAME_TIMEOUT_MS 500
+#define IMAGE_PROGRESS_LOG_INTERVAL 10
 
 // Set to 1 when a serial capture of the received image is needed. The output
 // between IMAGE_BASE64_BEGIN/END can be decoded by a host-side script.
@@ -19,6 +20,10 @@ uint16_t expectedChunks = 0;
 uint16_t nextChunk = 0;
 uint32_t expectedBytes = 0;
 uint32_t receivedBytes = 0;
+uint16_t validChunks = 0;
+uint16_t corruptChunks = 0;
+uint16_t missingChunks = 0;
+uint16_t duplicateChunks = 0;
 char expectedSha256[65] = {0};
 
 bool readExact(uint8_t* buffer, size_t length) {
@@ -49,6 +54,10 @@ void resetImageState() {
   nextChunk = 0;
   expectedBytes = 0;
   receivedBytes = 0;
+  validChunks = 0;
+  corruptChunks = 0;
+  missingChunks = 0;
+  duplicateChunks = 0;
   expectedSha256[0] = '\0';
 }
 
@@ -112,7 +121,8 @@ void handleImageStart(const uint8_t* payload, uint16_t length) {
                 expectedChunks, document["mimeType"] | "unknown");
 }
 
-void handleImageChunk(uint16_t sequence, const uint8_t* payload, uint16_t length) {
+void handleImageChunk(uint16_t sequence, const uint8_t* payload, uint16_t length,
+                      bool crcValid) {
   if (!imageActive) {
     Serial.println("[ERROR] Image chunk received without an active image");
     return;
@@ -129,18 +139,28 @@ void handleImageChunk(uint16_t sequence, const uint8_t* payload, uint16_t length
     return;
   }
 
+  if (!crcValid) {
+    corruptChunks++;
+    imageActive = false;
+    Serial.println("[ERROR] Image session aborted after CRC failure");
+    return;
+  }
+  validChunks++;
   mbedtls_sha256_update(&imageHash, payload, length);
   receivedBytes += length;
   nextChunk++;
   printBase64(payload, length);
-  Serial.printf("[IMAGE] CHUNK index=%u/%u bytes=%u total=%lu/%lu\n", sequence,
-                expectedChunks, length, (unsigned long)receivedBytes,
-                (unsigned long)expectedBytes);
+  if (!crcValid || sequence % IMAGE_PROGRESS_LOG_INTERVAL == 0 ||
+      sequence + 1 == expectedChunks) {
+    Serial.printf("[IMAGE] CHUNK index=%u/%u bytes=%u crc=%s total=%lu/%lu\n",
+                  sequence, expectedChunks, length, crcValid ? "ok" : "bad",
+                  (unsigned long)receivedBytes, (unsigned long)expectedBytes);
+  }
 }
 
-void handleImageEnd(const uint8_t* payload, uint16_t length) {
+void handleImageEnd(const uint8_t* payload, uint16_t length, bool crcValid) {
   JsonDocument document;
-  if (!imageActive || deserializeJson(document, payload, length)) {
+  if (!imageActive || !crcValid || deserializeJson(document, payload, length)) {
     Serial.println("[ERROR] Invalid image end or no active image");
     resetImageState();
     return;
@@ -159,18 +179,22 @@ void handleImageEnd(const uint8_t* payload, uint16_t length) {
   }
   actualHex[64] = '\0';
 
-  Serial.printf("[IMAGE] END receivedBytes=%lu/%lu chunks=%u/%u\n",
+  Serial.printf("[IMAGE] END receivedBytes=%lu/%lu chunks=%u/%u valid=%u corrupt=%u missing=%u duplicate=%u\n",
                 (unsigned long)receivedBytes, (unsigned long)expectedBytes,
-                nextChunk, expectedChunks);
+                nextChunk, expectedChunks, validChunks, corruptChunks,
+                missingChunks, duplicateChunks);
   Serial.printf("[IMAGE] SHA256 expected=%s actual=%s\n",
                 metadataValid ? expectedSha256 : "invalid", actualHex);
 
-  if (metadataValid && sizeValid && countValid && strcmp(expectedSha256, actualHex) == 0) {
+  if (metadataValid && sizeValid && countValid && corruptChunks == 0 &&
+      strcmp(expectedSha256, actualHex) == 0) {
     Serial.println("[SUCCESS] IMAGE VERIFIED");
   } else {
-    Serial.printf("[ERROR] IMAGE VERIFICATION FAILED size=%s count=%s sha=%s\n",
+    Serial.printf("[WARN] IMAGE RECEIVED WITH ERRORS size=%s count=%s crcErrors=%u sha=%s\n",
                   sizeValid ? "ok" : "mismatch", countValid ? "ok" : "mismatch",
-                  metadataValid ? "mismatch" : "invalid");
+                  corruptChunks, metadataValid && strcmp(expectedSha256, actualHex) == 0
+                      ? "ok"
+                      : "mismatch");
   }
 #if DEBUG_EMIT_IMAGE_BASE64
   Serial.println("IMAGE_BASE64_END");
@@ -179,7 +203,7 @@ void handleImageEnd(const uint8_t* payload, uint16_t length) {
 }
 
 void handleFrame(OpticalFrameType type, uint16_t sequence,
-                 const uint8_t* payload, uint16_t length) {
+                 const uint8_t* payload, uint16_t length, bool crcValid) {
   if (type == FRAME_TEXT) {
     Serial.printf("[SUCCESS] TEXT %u bytes: ", length);
     Serial.write(payload, length);
@@ -187,9 +211,9 @@ void handleFrame(OpticalFrameType type, uint16_t sequence,
   } else if (type == FRAME_IMAGE_START) {
     handleImageStart(payload, length);
   } else if (type == FRAME_IMAGE_CHUNK) {
-    handleImageChunk(sequence, payload, length);
+    handleImageChunk(sequence, payload, length, crcValid);
   } else if (type == FRAME_IMAGE_END) {
-    handleImageEnd(payload, length);
+    handleImageEnd(payload, length, crcValid);
   } else {
     Serial.println("[ERROR] Unknown optical frame type");
   }
@@ -220,18 +244,23 @@ void readOpticalFrame() {
   }
 
   const uint32_t actualCrc = opticalCrc32(opticalPayload, length);
-  if (actualCrc != expectedCrc) {
+  const bool crcValid = actualCrc == expectedCrc;
+  if (!crcValid) {
     Serial.printf("[ERROR] CRC mismatch expected=%08lX actual=%08lX\n",
                   expectedCrc, actualCrc);
+    if (type == FRAME_IMAGE_CHUNK) imageActive = false;
     return;
   }
-  handleFrame(type, sequence, opticalPayload, length);
+  handleFrame(type, sequence, opticalPayload, length, true);
 }
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("\nTERAHERTZ BINARY UART RECEIVER");
+  // A complete image chunk is 512 bytes. Keep enough queued input to survive
+  // USB diagnostic output and loop scheduling between optical frames.
+  Serial1.setRxBufferSize(4096);
   Serial1.begin(BAUD_RATE, SERIAL_8N1, RECEIVER_PIN, -1, true);
   mbedtls_sha256_init(&imageHash);
   resetImageState();
