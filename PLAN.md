@@ -173,9 +173,9 @@ Each phase below must leave the repository in a buildable state and have an expl
 
 ### Phase 8 — Images and chunked optical transport
 
-- [x] Validate uploads at a maximum of 500 KB.
-- [x] Define binary/chunk metadata and checksum strategy.
-- [x] Store or stream chunks without putting a 500 KB base64 image in one ESP32 buffer.
+- [x] Validate uploads at a maximum of 250 KB.
+- [x] Define newline-delimited image metadata and chunk transport.
+- [x] Stream base64 chunks without putting a 250 KB image in one ESP32 buffer.
 - [x] Avoid one HTTP request per chunk from the ESP32.
 - [ ] Add sender/receiver reassembly and retry behavior.
 - [ ] Add completed-image storage and dashboard rendering.

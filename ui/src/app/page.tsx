@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   CircleAlert,
   ImagePlus,
+  LoaderCircle,
   Radio,
   Send,
   Trash2,
@@ -48,6 +50,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Progress } from "@/components/ui/progress";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { Separator } from "@/components/ui/separator";
 import {
@@ -59,20 +62,31 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-
-const MAX_IMAGE_BYTES = 500 * 1024;
+import { MAX_TRANSFER_BYTES } from "@/lib/protocol";
 
 type MessageType = "text" | "image";
 type Status = "idle" | "sending" | "published" | "success" | "failed";
+type Telemetry = {
+  receivedAt?: number;
+  receivedBytes?: number;
+  receivedPayload?: string;
+  checksumPassed?: boolean;
+  chunksReceived?: number;
+  chunksExpected?: number;
+  sha256Passed?: boolean;
+};
+
 type RecordItem = {
   id: string;
   type: MessageType;
   payload?: string;
   fileName?: string;
+  mimeType?: string;
   inputBytes: number;
   status: "queued" | "published" | "failed" | "success";
   timestamp: number;
   updatedAt: number;
+  telemetry?: Telemetry;
 };
 
 type SendResult = { command?: RecordItem; error?: string };
@@ -111,10 +125,20 @@ export default function HomePage() {
   const [status, setStatus] = useState<Status>("idle");
   const [notice, setNotice] = useState("");
   const [popupOpen, setPopupOpen] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const imagePreviewRef = useRef<string | null>(null);
 
-  const latest = records[0];
-  const canSend = type === "text" ? text.trim().length > 0 : file !== null;
-  const fileTooLarge = file !== null && file.size > MAX_IMAGE_BYTES;
+  const latestReceived = records.find((r) => r.telemetry !== undefined);
+  const textBytes = new TextEncoder().encode(text).byteLength;
+  const textTooLarge = textBytes > MAX_TRANSFER_BYTES;
+  const textHasNewlines = /[\n\r]/.test(text);
+  const canSend =
+    type === "text"
+      ? text.trim().length > 0 && !textTooLarge && !textHasNewlines
+      : file !== null;
+  const fileTooLarge = file !== null && file.size > MAX_TRANSFER_BYTES;
   const inputSummary = useMemo(() => {
     if (type === "image")
       return file
@@ -124,21 +148,37 @@ export default function HomePage() {
   }, [file, text, type]);
 
   useEffect(() => {
+    return () => {
+      if (imagePreviewRef.current) {
+        URL.revokeObjectURL(imagePreviewRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
-    void fetch("/api/history", { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) return;
+
+    const fetchHistory = async () => {
+      try {
+        const response = await fetch("/api/history", { cache: "no-store" });
+        if (!response.ok || cancelled) return;
         const data = (await response.json()) as { records: RecordItem[] };
         if (!cancelled) setRecords(data.records);
-      })
-      .catch(() => undefined);
+      } catch {
+        // network error — silently retry on next interval
+      }
+    };
+
+    void fetchHistory();
+    const interval = setInterval(() => void fetchHistory(), 5000);
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
   }, []);
 
   async function submit() {
-    if (!canSend || fileTooLarge) return;
+    if (!canSend || fileTooLarge || textTooLarge || textHasNewlines) return;
     setStatus("sending");
     setNotice("");
     setPopupOpen(true);
@@ -167,6 +207,11 @@ export default function HomePage() {
         ...current.filter((item) => item.id !== data.command!.id),
       ]);
       if (type === "text") setText("");
+      if (imagePreviewRef.current) {
+        URL.revokeObjectURL(imagePreviewRef.current);
+        imagePreviewRef.current = null;
+      }
+      setImagePreviewUrl(null);
       setFile(null);
     } catch (error) {
       setStatus("failed");
@@ -179,8 +224,19 @@ export default function HomePage() {
   }
 
   async function clearHistory() {
-    const response = await fetch("/api/history", { method: "DELETE" });
-    if (response.ok) setRecords([]);
+    setClearing(true);
+    try {
+      const response = await fetch("/api/history", { method: "DELETE" });
+      if (!response.ok) throw new Error("History could not be deleted");
+      setRecords([]);
+      setClearOpen(false);
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "History could not be deleted",
+      );
+    } finally {
+      setClearing(false);
+    }
   }
 
   return (
@@ -269,10 +325,22 @@ export default function HomePage() {
                       onChange={(event) => setText(event.target.value)}
                       placeholder="Enter a message to send through the optical link..."
                       rows={8}
+                      className="max-h-80 resize-y overflow-y-auto"
                     />
                     <FieldDescription>
-                      UTF-8 text · maximum 32 KB at the cloud boundary.
+                      UTF-8 text · maximum 250 KB at the cloud boundary.
                     </FieldDescription>
+                    {textHasNewlines && (
+                      <p className="text-destructive text-sm">
+                        Line breaks are not supported — the optical link uses
+                        newline as a packet delimiter.
+                      </p>
+                    )}
+                    {textTooLarge && (
+                      <p className="text-destructive text-sm">
+                        This message exceeds the 250 KB limit.
+                      </p>
+                    )}
                   </Field>
                 ) : (
                   <Field>
@@ -281,23 +349,46 @@ export default function HomePage() {
                     </FieldLabel>
                     <label
                       htmlFor="image-upload"
-                      className="bg-muted/30 hover:bg-muted/60 flex min-h-48 cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border border-dashed p-6 text-center transition-colors"
+                      className="bg-muted/30 hover:bg-muted/60 flex min-h-48 cursor-pointer flex-col items-center justify-center gap-3 overflow-hidden rounded-lg border border-dashed p-3 text-center transition-colors"
                     >
-                      <ImagePlus className="text-primary size-8" />
-                      <span className="font-medium">
+                      {imagePreviewUrl ? (
+                        <ScrollArea className="max-h-64 w-full">
+                          <Image
+                            src={imagePreviewUrl}
+                            alt={file?.name ?? "Selected image preview"}
+                            width={640}
+                            height={480}
+                            unoptimized
+                            className="mx-auto max-w-full rounded-md object-contain"
+                          />
+                        </ScrollArea>
+                      ) : (
+                        <ImagePlus className="text-primary size-8" />
+                      )}
+                      <span className="max-w-full truncate font-medium">
                         {file ? file.name : "Choose an image"}
                       </span>
                       <span className="text-muted-foreground text-sm">
-                        PNG, JPEG, GIF or WebP · maximum 500 KB
+                        PNG, JPEG, GIF or WebP · maximum 250 KB
                       </span>
                       <input
                         id="image-upload"
                         type="file"
                         accept="image/*"
                         className="sr-only"
-                        onChange={(event) =>
-                          setFile(event.target.files?.[0] ?? null)
-                        }
+                        onChange={(event) => {
+                          if (imagePreviewRef.current) {
+                            URL.revokeObjectURL(imagePreviewRef.current);
+                            imagePreviewRef.current = null;
+                          }
+                          const selectedFile = event.target.files?.[0] ?? null;
+                          const previewUrl = selectedFile
+                            ? URL.createObjectURL(selectedFile)
+                            : null;
+                          imagePreviewRef.current = previewUrl;
+                          setImagePreviewUrl(previewUrl);
+                          setFile(selectedFile);
+                        }}
                       />
                     </label>
                     <FieldDescription>
@@ -332,7 +423,7 @@ export default function HomePage() {
               </Button>
               {fileTooLarge && (
                 <p className="text-destructive text-sm">
-                  This image exceeds the 500 KB limit.
+                  This file exceeds the 250 KB limit.
                 </p>
               )}
             </CardFooter>
@@ -350,14 +441,18 @@ export default function HomePage() {
                   </CardTitle>
                 </div>
                 <Badge
-                  variant={latest ? statusVariant(latest.status) : "outline"}
+                  variant={
+                    latestReceived
+                      ? statusVariant(latestReceived.status)
+                      : "outline"
+                  }
                 >
-                  {latest?.status ?? "waiting"}
+                  {latestReceived?.status ?? "waiting"}
                 </Badge>
               </div>
               <CardDescription>
-                The receiver panel will update when the physical ESP32 reports
-                telemetry.
+                Updated when the receiver ESP32 POSTs telemetry after each
+                optical delivery.
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-5">
@@ -365,15 +460,44 @@ export default function HomePage() {
                 <p className="text-muted-foreground font-mono text-xs tracking-[0.2em] uppercase">
                   Optical output
                 </p>
-                <p className="mt-8 text-2xl leading-relaxed break-words">
-                  {latest?.payload ?? "Waiting for the receiver ESP32..."}
-                </p>
+                <ScrollArea className="mt-8 max-h-72">
+                  {latestReceived?.type === "text" &&
+                  latestReceived.telemetry?.receivedPayload ? (
+                    <p className="pr-3 text-2xl leading-relaxed break-words whitespace-pre-wrap">
+                      {latestReceived.telemetry.receivedPayload}
+                    </p>
+                  ) : latestReceived?.type === "image" ? (
+                    <div className="flex flex-col gap-1">
+                      <p className="text-2xl font-medium">
+                        {latestReceived.mimeType ?? "image"}
+                      </p>
+                      <p className="text-muted-foreground text-sm">
+                        {formatBytes(
+                          latestReceived.telemetry?.receivedBytes ??
+                            latestReceived.inputBytes,
+                        )}
+                        {" · "}
+                        {latestReceived.telemetry?.chunksReceived ?? "?"}
+                        {"/"}
+                        {latestReceived.telemetry?.chunksExpected ?? "?"} chunks
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-muted-foreground text-2xl">
+                      Waiting for the receiver ESP32…
+                    </p>
+                  )}
+                </ScrollArea>
                 <p className="text-muted-foreground mt-8 flex items-center gap-2 text-sm">
-                  {latest ? (
+                  {latestReceived?.telemetry?.receivedAt ? (
                     <>
                       <Check className="text-primary size-4" />
-                      {formatBytes(latest.inputBytes)} received ·{" "}
-                      {formatTime(latest.updatedAt)}
+                      {formatBytes(
+                        latestReceived.telemetry.receivedBytes ??
+                          latestReceived.inputBytes,
+                      )}{" "}
+                      received · 
+                      {formatTime(latestReceived.telemetry.receivedAt)}
                     </>
                   ) : (
                     "No confirmed optical transmission yet"
@@ -395,8 +519,34 @@ export default function HomePage() {
                 </Card>
                 <Card size="sm">
                   <CardContent className="p-3">
-                    <p className="text-muted-foreground text-xs">Errors</p>
-                    <p className="mt-1 font-mono font-medium">—</p>
+                    <p className="text-muted-foreground text-xs">Integrity</p>
+                    <p
+                      className={`mt-1 font-mono font-medium ${
+                        latestReceived?.type === "text"
+                          ? latestReceived.telemetry?.checksumPassed
+                            ? "text-primary"
+                            : "text-destructive"
+                          : latestReceived?.type === "image"
+                            ? latestReceived.telemetry?.sha256Passed
+                              ? "text-primary"
+                              : "text-destructive"
+                            : ""
+                      }`}
+                    >
+                      {latestReceived?.type === "text"
+                        ? latestReceived.telemetry?.checksumPassed
+                          ? "CRC ✓"
+                          : latestReceived.telemetry
+                            ? "CRC ✗"
+                            : "—"
+                        : latestReceived?.type === "image"
+                          ? latestReceived.telemetry?.sha256Passed
+                            ? "SHA-256 ✓"
+                            : latestReceived.telemetry
+                              ? "SHA-256 ✗"
+                              : "—"
+                          : "—"}
+                    </p>
                   </CardContent>
                 </Card>
               </div>
@@ -415,7 +565,7 @@ export default function HomePage() {
                   Transmission history
                 </CardTitle>
               </div>
-              <AlertDialog>
+              <AlertDialog open={clearOpen} onOpenChange={setClearOpen}>
                 <AlertDialogTrigger
                   render={
                     <Button variant="outline" disabled={records.length === 0} />
@@ -435,9 +585,26 @@ export default function HomePage() {
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => void clearHistory()}>
-                      Delete history
+                    <AlertDialogCancel disabled={clearing}>
+                      Cancel
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={clearing}
+                      aria-busy={clearing}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        void clearHistory();
+                      }}
+                    >
+                      {clearing ? (
+                        <LoaderCircle
+                          data-icon="inline-start"
+                          className="animate-spin"
+                        />
+                      ) : (
+                        <Trash2 data-icon="inline-start" />
+                      )}
+                      {clearing ? "Deleting..." : "Delete history"}
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
@@ -455,42 +622,44 @@ export default function HomePage() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Message</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Size</TableHead>
-                      <TableHead className="text-right">Time</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {records.map((record) => (
-                      <TableRow key={record.id}>
-                        <TableCell className="max-w-64 truncate font-medium">
-                          {record.type === "image"
-                            ? record.fileName
-                            : record.payload}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground uppercase">
-                          {record.type}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={statusVariant(record.status)}>
-                            {record.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground font-mono">
-                          {formatBytes(record.inputBytes)}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground text-right">
-                          {formatTime(record.timestamp)}
-                        </TableCell>
+                <ScrollArea className="max-h-96">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Message</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Size</TableHead>
+                        <TableHead className="text-right">Time</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {records.map((record) => (
+                        <TableRow key={record.id}>
+                          <TableCell className="max-w-64 truncate font-medium">
+                            {record.type === "image"
+                              ? record.fileName
+                              : record.payload}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground uppercase">
+                            {record.type}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={statusVariant(record.status)}>
+                              {record.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground font-mono">
+                            {formatBytes(record.inputBytes)}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground text-right">
+                            {formatTime(record.timestamp)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </ScrollArea>
               </div>
             )}
           </CardContent>

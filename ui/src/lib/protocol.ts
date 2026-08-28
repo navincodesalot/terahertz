@@ -3,20 +3,25 @@ import { z } from "zod";
 export const COMMAND_CHANNEL = "laser_commands" as const;
 export const MESSAGE_KEY_PREFIX = "message:" as const;
 export const HISTORY_KEY = "transmission_history" as const;
-export const MAX_IMAGE_BYTES = 500 * 1024;
-// Keep the JSON/base64 Pub/Sub message comfortably below Arduino-Redis read limits.
+export const MAX_TRANSFER_BYTES = 250 * 1024;
 export const IMAGE_CHUNK_BYTES = 1024;
 export const UART_BAUD = 250000;
 export const UART_FORMAT = "8N1";
-
-const MAX_TEXT_BYTES = 32 * 1024;
 
 export const sendTextSchema = z.object({
   type: z.literal("text").default("text"),
   payload: z
     .string()
     .min(1, "Payload must not be empty")
-    .max(MAX_TEXT_BYTES, "Payload must be 32 KB or smaller"),
+    .refine(
+      (value) => !/[\n\r]/.test(value),
+      "Payload must not contain line breaks",
+    )
+    .refine(
+      (value) =>
+        new TextEncoder().encode(value).byteLength <= MAX_TRANSFER_BYTES,
+      "Payload must be 250 KB or smaller",
+    ),
 });
 
 export const textCommandSchema = z.object({
@@ -32,7 +37,7 @@ export const textCommandSchema = z.object({
 export const imageStartCommandSchema = z.object({
   id: z.string().min(1),
   type: z.literal("image_start"),
-  totalBytes: z.number().int().positive().max(MAX_IMAGE_BYTES),
+  totalBytes: z.number().int().positive().max(MAX_TRANSFER_BYTES),
   chunkBytes: z.number().int().positive(),
   chunkCount: z.number().int().positive(),
   mimeType: z.string().min(1),
@@ -71,6 +76,16 @@ export const messageStatusSchema = z.enum([
   "success",
 ]);
 
+export const telemetrySchema = z.object({
+  receivedAt: z.number().int().nonnegative().optional(),
+  receivedBytes: z.number().int().nonnegative().optional(),
+  receivedPayload: z.string().optional(),
+  checksumPassed: z.boolean().optional(),
+  chunksReceived: z.number().int().nonnegative().optional(),
+  chunksExpected: z.number().int().nonnegative().optional(),
+  sha256Passed: z.boolean().optional(),
+});
+
 export const messageRecordSchema = z.object({
   id: z.string().min(1),
   type: z.enum(["text", "image"]),
@@ -81,11 +96,13 @@ export const messageRecordSchema = z.object({
   status: messageStatusSchema,
   updatedAt: z.number().int().nonnegative(),
   timestamp: z.number().int().nonnegative(),
+  telemetry: telemetrySchema.optional(),
   error: z.string().optional(),
 });
 
 export type TextCommand = z.infer<typeof textCommandSchema>;
 export type Command = z.infer<typeof commandSchema>;
+export type Telemetry = z.infer<typeof telemetrySchema>;
 export type MessageRecord = z.infer<typeof messageRecordSchema>;
 
 export function messageKey(id: string) {

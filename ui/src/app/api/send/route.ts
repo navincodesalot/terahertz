@@ -7,7 +7,7 @@ import {
   COMMAND_CHANNEL,
   HISTORY_KEY,
   IMAGE_CHUNK_BYTES,
-  MAX_IMAGE_BYTES,
+  MAX_TRANSFER_BYTES,
   UART_BAUD,
   UART_FORMAT,
   messageKey,
@@ -19,7 +19,10 @@ import {
 export const runtime = "nodejs";
 
 const IMAGE_PUBLISH_BATCH_SIZE = 4;
-const IMAGE_PUBLISH_GAP_MS = 25;
+const IMAGE_PUBLISH_GAP_MS = 30;
+// Extra delay after image_start before chunks begin. Gives the ESP32 sender
+// time to prime the optical link with a warmup line before the data flows.
+const IMAGE_START_WARMUP_MS = 600;
 
 async function persistAndPublish(
   commandId: string,
@@ -32,19 +35,38 @@ async function persistAndPublish(
   await redis.zadd(HISTORY_KEY, { score: timestamp, member: commandId });
 
   try {
-    const batchSize = commands.length > 1 ? IMAGE_PUBLISH_BATCH_SIZE : 1;
-    for (let start = 0; start < commands.length; start += batchSize) {
+    const isImage = commands.length > 1;
+    if (isImage) {
+      // Publish image_start alone first so the ESP32 can prime the optical
+      // link before any chunk data arrives.
+      const startPipeline = redis.pipeline();
+      startPipeline.publish(COMMAND_CHANNEL, JSON.stringify(commands[0]));
+      await startPipeline.exec();
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, IMAGE_START_WARMUP_MS),
+      );
+      // Publish remaining commands (chunks + image_end) in small batches.
+      for (
+        let start = 1;
+        start < commands.length;
+        start += IMAGE_PUBLISH_BATCH_SIZE
+      ) {
+        const pipeline = redis.pipeline();
+        const batch = commands.slice(start, start + IMAGE_PUBLISH_BATCH_SIZE);
+        for (const command of batch) {
+          pipeline.publish(COMMAND_CHANNEL, JSON.stringify(command));
+        }
+        await pipeline.exec();
+        if (start + IMAGE_PUBLISH_BATCH_SIZE < commands.length) {
+          await new Promise<void>((resolve) =>
+            setTimeout(resolve, IMAGE_PUBLISH_GAP_MS),
+          );
+        }
+      }
+    } else {
       const pipeline = redis.pipeline();
-      const batch = commands.slice(start, start + batchSize);
-      for (const command of batch) {
-        pipeline.publish(COMMAND_CHANNEL, JSON.stringify(command));
-      }
+      pipeline.publish(COMMAND_CHANNEL, JSON.stringify(commands[0]));
       await pipeline.exec();
-      if (start + batchSize < commands.length) {
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, IMAGE_PUBLISH_GAP_MS);
-        });
-      }
     }
   } catch (error) {
     const failedRecord: MessageRecord = {
@@ -130,8 +152,8 @@ async function createImageCommand(request: Request) {
     return invalid("Multipart request must include a file field");
   if (!value.type.startsWith("image/"))
     return invalid("Only image files are supported");
-  if (value.size < 1 || value.size > MAX_IMAGE_BYTES) {
-    return invalid("Image must be between 1 byte and 500 KB");
+  if (value.size < 1 || value.size > MAX_TRANSFER_BYTES) {
+    return invalid("Image must be between 1 byte and 250 KB");
   }
 
   const bytes = Buffer.from(await value.arrayBuffer());

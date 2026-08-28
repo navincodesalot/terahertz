@@ -1,52 +1,35 @@
 #pragma once
 
-#include <Arduino.h>
+// Shared newline-delimited optical transport protocol.
+//
+// Wire record formats (newline-terminated):
+//   Text:        THZTXT|<id>|<crc32hex>|<payload>
+//   Image start: THZIMG|S|<id>|<chunkCount>|<totalBytes>|<mimeType>
+//   Image chunk: THZIMG|C|<id>|<index>|<base64data>|<crc32hex>
+//   Image end:   THZIMG|E|<id>|<sha256hex>
+//
+// Constraints:
+//   - Payloads must not contain '\n' or '\r'.
+//   - '|' may appear in text payloads; parsers use field-count position splits.
+//   - CRC-32 covers the payload/base64 string bytes, not the framing.
 
-// Binary-safe UART frame. All multi-byte values are big-endian.
-// [TH 01][type][sequence u16][payload length u16][CRC32 u32][payload]
-#define OPTICAL_MAGIC_0 0x54
-#define OPTICAL_MAGIC_1 0x48
-#define OPTICAL_VERSION 0x01
-#define OPTICAL_HEADER_BYTES 12
-#define OPTICAL_MAX_PAYLOAD 4096
+#define MAX_TRANSFER_BYTES (250 * 1024)
+#define IMAGE_CHUNK_BYTES  1024
 
-enum OpticalFrameType : uint8_t {
-  FRAME_TEXT = 1,
-  FRAME_IMAGE_START = 2,
-  FRAME_IMAGE_CHUNK = 3,
-  FRAME_IMAGE_END = 4,
-};
-
+// CRC-32 (ISO 3309 / Ethernet polynomial).
 inline uint32_t opticalCrc32(const uint8_t* data, size_t length) {
   uint32_t crc = 0xFFFFFFFF;
   while (length--) {
     crc ^= *data++;
-    for (uint8_t bit = 0; bit < 8; bit++) crc = (crc >> 1) ^ (0xEDB88320 & -(crc & 1));
+    for (uint8_t bit = 0; bit < 8; bit++) {
+      crc = (crc >> 1) ^ (0xEDB88320u & -(crc & 1));
+    }
   }
   return ~crc;
 }
 
-inline void writeU16(Stream& stream, uint16_t value) {
-  stream.write((uint8_t)(value >> 8));
-  stream.write((uint8_t)value);
-}
-
-inline void writeU32(Stream& stream, uint32_t value) {
-  stream.write((uint8_t)(value >> 24));
-  stream.write((uint8_t)(value >> 16));
-  stream.write((uint8_t)(value >> 8));
-  stream.write((uint8_t)value);
-}
-
-inline bool writeOpticalFrame(Stream& stream, OpticalFrameType type, uint16_t sequence, const uint8_t* payload, uint16_t length) {
-  if (length > OPTICAL_MAX_PAYLOAD) return false;
-  stream.write(OPTICAL_MAGIC_0);
-  stream.write(OPTICAL_MAGIC_1);
-  stream.write(OPTICAL_VERSION);
-  stream.write((uint8_t)type);
-  writeU16(stream, sequence);
-  writeU16(stream, length);
-  writeU32(stream, opticalCrc32(payload, length));
-  stream.write(payload, length);
-  return true;
+// Write an 8-character lowercase hex CRC-32 into out[9] (including '\0').
+inline void opticalCrc32Hex(const uint8_t* data, size_t length, char out[9]) {
+  const uint32_t crc = opticalCrc32(data, length);
+  snprintf(out, 9, "%08lx", (unsigned long)crc);
 }

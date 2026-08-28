@@ -230,11 +230,11 @@ User uploads an image.
 
 Maximum:
 
-**500 KB**
+**250 KB**
 
 The image should eventually be transmitted as binary/chunked data.
 
-Do NOT design the system around putting a 500 KB base64 image directly into one ESP32 memory buffer.
+Do NOT design the system around putting a 250 KB base64 image directly into one ESP32 memory buffer.
 
 ---
 
@@ -900,7 +900,7 @@ The visual animation does NOT need to correspond 1:1 with individual physical by
 
 Images are capped at:
 
-**500 KB**
+**250 KB**
 
 The image should eventually be split into chunks.
 
@@ -924,7 +924,7 @@ IMAGE_END
 checksum
 ```
 
-Do not put a 500 KB base64 image into one ESP32 memory buffer.
+Do not put a 250 KB base64 image into one ESP32 memory buffer.
 
 Do not require the ESP32 to make hundreds of HTTP requests to retrieve individual chunks.
 
@@ -1298,7 +1298,7 @@ Only after text transmission is stable:
 ```text
 upload
  ↓
-≤500 KB validation
+≤250 KB validation
  ↓
 chunk
  ↓

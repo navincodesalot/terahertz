@@ -1,1 +1,2 @@
-secrets.h
+sender/secrets.h
+receiver/secrets.h

@@ -6,32 +6,16 @@ import { messageKey, type MessageRecord } from "@/lib/protocol";
 
 export const runtime = "nodejs";
 
-const telemetrySchema = z.object({
+const receiveSchema = z.object({
   id: z.string().min(1),
   status: z.enum(["success", "failed"]),
   type: z.enum(["text", "image"]),
-  payload: z.string().optional(),
-  output: z
-    .object({
-      text: z.string().optional(),
-      bytes: z.number().int().nonnegative().optional(),
-    })
-    .optional(),
-  radio: z
-    .object({
-      baud: z.number().int().positive().optional(),
-      uart: z.string().optional(),
-    })
-    .optional(),
-  performance: z
-    .object({
-      transmissionMs: z.number().nonnegative().optional(),
-      bitErrors: z.number().int().nonnegative().optional(),
-      checksumPassed: z.boolean().optional(),
-      retries: z.number().int().nonnegative().optional(),
-    })
-    .optional(),
-  timestamp: z.number().int().nonnegative().optional(),
+  receivedPayload: z.string().optional(),
+  receivedBytes: z.number().int().nonnegative().optional(),
+  checksumPassed: z.boolean().optional(),
+  chunksReceived: z.number().int().nonnegative().optional(),
+  chunksExpected: z.number().int().nonnegative().optional(),
+  sha256Passed: z.boolean().optional(),
 });
 
 export async function POST(request: Request) {
@@ -45,10 +29,10 @@ export async function POST(request: Request) {
     );
   }
 
-  const parsed = telemetrySchema.safeParse(body);
+  const parsed = receiveSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Invalid telemetry", issues: parsed.error.issues },
+      { error: "Invalid telemetry report", issues: parsed.error.issues },
       { status: 400 },
     );
   }
@@ -56,21 +40,33 @@ export async function POST(request: Request) {
   try {
     const redis = getRedis();
     const current = await redis.get<MessageRecord>(messageKey(parsed.data.id));
-    if (!current)
+    if (!current) {
       return NextResponse.json(
         { error: "Unknown message ID" },
         { status: 404 },
       );
+    }
 
     const updated: MessageRecord = {
       ...current,
       status: parsed.data.status,
-      payload: parsed.data.output?.text ?? current.payload,
       updatedAt: Date.now(),
+      telemetry: {
+        receivedAt: Date.now(),
+        receivedBytes: parsed.data.receivedBytes,
+        receivedPayload: parsed.data.receivedPayload,
+        checksumPassed: parsed.data.checksumPassed,
+        chunksReceived: parsed.data.chunksReceived,
+        chunksExpected: parsed.data.chunksExpected,
+        sha256Passed: parsed.data.sha256Passed,
+      },
     };
-    await redis.set(messageKey(parsed.data.id), {
-      ...updated,
-      telemetry: parsed.data,
+
+    await redis.set(messageKey(parsed.data.id), updated);
+    console.info("Telemetry stored", {
+      id: parsed.data.id,
+      status: parsed.data.status,
+      type: parsed.data.type,
     });
 
     return NextResponse.json({ record: updated });
