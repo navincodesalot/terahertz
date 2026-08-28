@@ -19,6 +19,7 @@ unsigned long nextRedisAttempt = 0;
 
 uint8_t imageChunkBuffer[IMAGE_CHUNK_BUFFER_BYTES];
 uint16_t expectedImageChunks = 0;
+JsonDocument commandDocument;
 
 void sendOpticalText(const String& payload) {
   if (payload.length() == 0 || payload.length() > MAX_OPTICAL_TEXT_BYTES) {
@@ -27,6 +28,7 @@ void sendOpticalText(const String& payload) {
   }
 
   writeOpticalFrame(Serial1, FRAME_TEXT, 0, (const uint8_t*)payload.c_str(), payload.length());
+  Serial1.flush();
   Serial.printf("UART frame sent: TEXT, %u bytes\n", payload.length());
 }
 
@@ -41,14 +43,16 @@ int base64Value(char value) {
 
 size_t decodeBase64(const char* input, uint8_t* output, size_t outputLimit) {
   size_t outputLength = 0;
-  int accumulator = 0;
-  int bits = 0;
+  uint32_t accumulator = 0;
+  uint8_t bits = 0;
 
   for (size_t i = 0; input[i] != '\0'; i++) {
     const int value = base64Value(input[i]);
     if (value < 0) continue;
 
-    accumulator = (accumulator << 6) | value;
+    // Keep only the bits needed for the next output byte. Without this
+    // bound, the accumulator overflows after a few Base64 characters.
+    accumulator = ((accumulator << 6) | (uint32_t)value) & 0xFFFFFF;
     bits += 6;
     if (bits >= 8) {
       bits -= 8;
@@ -73,6 +77,9 @@ void sendImageCommand(JsonDocument& document) {
       Serial.println("[REJECTED] Image chunk is too large or invalid");
       return;
     }
+    // Do not accept the next Redis message until this frame has left the UART.
+    // At 250000 baud a 1 KB frame takes roughly 40 ms on the wire.
+    Serial1.flush();
     Serial.printf("UART frame sent: IMAGE_CHUNK index=%u/%u bytes=%u\n",
                   sequence, expectedImageChunks, decoded);
     return;
@@ -85,6 +92,7 @@ void sendImageCommand(JsonDocument& document) {
     Serial.println("[REJECTED] Image metadata is too large");
     return;
   }
+  Serial1.flush();
   Serial.printf("UART frame sent: %s\n", type);
   if (strcmp(type, "image_end") == 0) {
     expectedImageChunks = 0;
@@ -92,8 +100,9 @@ void sendImageCommand(JsonDocument& document) {
 }
 
 void handleCommand(const String& json) {
-  JsonDocument document;
-  const DeserializationError error = deserializeJson(document, json);
+  commandDocument.clear();
+  const DeserializationError error = deserializeJson(commandDocument, json);
+  JsonDocument& document = commandDocument;
   if (error) {
     Serial.printf("[REJECTED] Invalid command JSON: %s\n", error.c_str());
     return;

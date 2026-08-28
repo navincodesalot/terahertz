@@ -132,6 +132,8 @@ Each phase below must leave the repository in a buildable state and have an expl
 - [x] Correlate receiver telemetry with the original command ID.
 - [ ] Define behavior for checksum failures, duplicate reports, unknown IDs, and late reports.
 
+**Next implementation step:** connect the receiver firmware to this route only after it validates optical frames and correlates image sessions.
+
 **Acceptance:** a valid receiver report updates one transmission record; invalid or unverifiable measurements are not stored as fabricated values.
 
 ### Phase 5 — Useful dashboard vertical slice
@@ -177,7 +179,9 @@ Each phase below must leave the repository in a buildable state and have an expl
 - [x] Define binary/chunk metadata and checksum strategy.
 - [x] Store or stream chunks without putting a 500 KB base64 image in one ESP32 buffer.
 - [x] Avoid one HTTP request per chunk from the ESP32.
-- [ ] Add sender/receiver reassembly and retry behavior.
+- [x] Add sender-side streaming of image start/chunk/end frames without buffering the complete image.
+- [x] Add receiver-side frame validation, ordered image reassembly, and SHA-256 verification in the receiver sketch.
+- [ ] Add receiver retry behavior after the local validation path is verified.
 - [ ] Add completed-image storage and dashboard rendering.
 
 **Acceptance:** a supported image can be transmitted, reassembled, verified, and displayed without exceeding ESP32 memory constraints.
@@ -203,7 +207,7 @@ Each phase below must leave the repository in a buildable state and have an expl
 
 ## Intentionally deferred
 
-- [ ] Receiver-side image reassembly, SHA-256 verification, and image storage.
+- [ ] Receiver-side image storage and dashboard rendering; local reassembly and SHA-256 verification are implemented but not physically verified.
 - [ ] Any change to the physical circuit.
 - [ ] Authentication/authorization architecture beyond protecting environment secrets.
 - [ ] Browser realtime streaming and progressive physical receive updates.
@@ -212,24 +216,29 @@ Each phase below must leave the repository in a buildable state and have an expl
 
 ## Current status
 
+The command path is now stable enough to proceed to receiver validation. Keep the sender and receiver at `250000` baud for these integration tests; baud-rate changes belong in Phase 10 after receiver validation. Image data is streamed immediately as each Redis command arrives, not buffered until `image_end`. The sender applies UART backpressure with `Serial1.flush()` and the server publishes in small paced batches. The receiver currently validates and reassembles locally, reporting text and image verification over USB serial; it does not yet post telemetry to Vercel.
+
 - [x] PRD reviewed.
 - [x] Existing sender and receiver firmware reviewed.
 - [x] Existing Next.js/shadcn application reviewed.
 - [x] ESP32-S3 target confirmed.
 - [x] Current `250000` baud confirmed for now.
-- [x] Firmware adapter implemented for ESP32-S3; hardware flash/test remains.
+- [x] Firmware adapter implemented for ESP32-S3 and sender hardware-tested; receiver hardware verification remains.
 - [x] Phase 0 implementation complete.
 - [x] Phase 1 implementation complete except retry idempotency hardening.
 - [x] Phase 2 server-side contract implemented.
-- [x] Phase 3 sender adapter implemented; live hardware verification remains.
-- [x] Phase 4 receive API implemented; physical telemetry verification remains.
+- [x] Phase 3 sender adapter implemented and verified with live ESP32 Redis subscription, text transmission, and large-image streaming.
+- [x] Phase 4 receive API implemented; receiver firmware integration and physical telemetry verification remain.
 - [x] Phase 5 initial dashboard implemented.
 - [x] Phase 7 history and clear UI implemented.
 - [x] Phase 8 server-side image validation/chunk command generation implemented.
-- [x] Binary-safe UART frame protocol implemented for text/image frames.
+- [x] Phase 8 sender-side image streaming verified through `image_start`, ordered chunks, and `image_end`.
+- [x] Binary-safe UART frame protocol implemented for text/image frames with per-frame CRC32.
 - [x] Arduino sketches reorganized into separate `sender/` and `receiver/` sketch folders.
 - [x] Shared protocol header placed in `firmware/common/`.
-- [ ] Flash and verify ESP32-S3 sender over USB serial.
-- [ ] Phase 2 persistent ESP32-S3 subscriber verification.
+- [x] Flash and verify ESP32-S3 sender over USB serial.
+- [x] Phase 2 persistent ESP32-S3 subscriber verification.
+- [x] Implement receiver-side frame validation, ordered image reassembly, and SHA-256 verification.
+- [ ] Physically verify receiver text/image output over a UART loopback or optical link.
+- [ ] Connect verified receiver telemetry to `/api/receive`.
 - [ ] Phase 6 browser realtime delivery.
-- [ ] Receiver-side image reassembly and SHA-256 verification.

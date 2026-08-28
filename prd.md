@@ -97,14 +97,14 @@ The previous 100 pF TIA feedback capacitor was reduced to 10 pF because it exces
 * MCP6292 TIA
 * MAX941 comparator
 * Hardware UART
-* 115200 baud = current reliability baseline
-* 250000 baud = experimentally usable but less reliable
+* 115200 baud = earlier reliability baseline
+* 250000 baud = current cloud-integration setting; now being validated with paced streaming
 
-For cloud integration, initially use:
+For the current cloud integration, use:
 
-**115200 baud.**
+**250000 baud.**
 
-Do not simultaneously optimize the optical bitrate while debugging the cloud system.
+Keep this setting fixed while implementing receiver validation. Re-test at 115200 only if the physical optical link proves unreliable; do not change baud and cloud behavior in the same experiment.
 
 ---
 
@@ -132,33 +132,24 @@ The final `true` inverts the UART signal so that the electrical/laser line idles
 
 This is important because an idle-high UART would otherwise leave the laser continuously ON.
 
-The existing optical protocol uses a packet envelope approximately like:
+The cloud integration uses a shared binary-safe optical frame envelope:
 
 ```text
-<PAYLOAD|CHECKSUM>
+[magic][version][type][sequence][payload length][CRC32][payload]
 ```
 
-Checksum:
+The sender emits one frame at a time over the existing inverted hardware UART. The receiver must:
 
-```text
-XOR of payload characters
-```
+1. synchronize on the frame magic bytes
+2. validate the protocol version and payload length
+3. read the sequence, CRC32, and payload
+4. calculate and compare CRC32
+5. reject corrupt or oversized frames
+6. dispatch valid text/image-start/image-chunk/image-end frames
 
-formatted as a 2-character hexadecimal value.
+CRC32 protects each optical frame. Image-level SHA-256 verification, missing/duplicate chunk detection, and reassembly are receiver-layer work that remains to be implemented.
 
-The receiver:
-
-1. waits for `<`
-2. receives payload
-3. receives checksum
-4. waits for `>`
-5. calculates its own checksum
-6. compares
-7. accepts only if valid
-
-The existing sender/receiver firmware already has this physical transmission logic.
-
-The cloud layer should feed jobs into this existing transmission system rather than replacing it.
+The cloud layer feeds jobs into this existing hardware UART path rather than changing the laser driver or physical circuit.
 
 ---
 
@@ -256,7 +247,7 @@ Upstash Redis Pub/Sub
 ESP32 Sender
 ```
 
-This is the current development priority.
+The command transport is implemented and hardware-tested for text and paced image streaming. The next priority is receiver-side validation and telemetry.
 
 ---
 
@@ -305,7 +296,7 @@ Realtime event
 Browser
 ```
 
-For browser-side live updates, Upstash Realtime or an equivalent Vercel streaming mechanism may be used.
+For browser-side live updates, Upstash Realtime or an equivalent Vercel streaming mechanism may be used. Before enabling this POST path, the receiver will first print and locally verify received text/images over USB serial. The receiver must report success only after frame CRC, ordering, byte count, and image SHA-256 checks pass.
 
 DO NOT confuse this with the ESP32 command transport.
 
@@ -348,7 +339,7 @@ PUBLISH laser_commands {...}
 
 the Redis server pushes the message through the already-open connection.
 
-The ESP32 should immediately process it.
+The sender should process it immediately, while applying bounded memory use and UART backpressure so Redis delivery does not outrun the physical optical link.
 
 Desired behavior:
 

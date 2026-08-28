@@ -18,8 +18,9 @@ import {
 
 export const runtime = "nodejs";
 
-const IMAGE_PUBLISH_BATCH_SIZE = 4;
-const IMAGE_PUBLISH_GAP_MS = 25;
+// Keep the Redis burst below the sender's optical UART throughput.
+const IMAGE_PUBLISH_BATCH_SIZE = 2;
+const IMAGE_PUBLISH_GAP_MS = 50;
 
 async function persistAndPublish(
   commandId: string,

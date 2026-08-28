@@ -48,6 +48,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Progress } from "@/components/ui/progress";
+import { toast } from "sonner";
 
 import { Separator } from "@/components/ui/separator";
 import {
@@ -111,6 +112,8 @@ export default function HomePage() {
   const [status, setStatus] = useState<Status>("idle");
   const [notice, setNotice] = useState("");
   const [popupOpen, setPopupOpen] = useState(false);
+  const [clearDialogOpen, setClearDialogOpen] = useState(false);
+  const [clearingHistory, setClearingHistory] = useState(false);
 
   const latest = records[0];
   const canSend = type === "text" ? text.trim().length > 0 : file !== null;
@@ -179,8 +182,26 @@ export default function HomePage() {
   }
 
   async function clearHistory() {
-    const response = await fetch("/api/history", { method: "DELETE" });
-    if (response.ok) setRecords([]);
+    setClearingHistory(true);
+    try {
+      const response = await fetch("/api/history", { method: "DELETE" });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(data?.error ?? "History could not be cleared");
+      }
+
+      setRecords([]);
+      setClearDialogOpen(false);
+      toast.success("Transmission history deleted");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "History could not be cleared",
+      );
+    } finally {
+      setClearingHistory(false);
+    }
   }
 
   return (
@@ -193,7 +214,7 @@ export default function HomePage() {
             </div>
             <div>
               <p className="font-heading text-lg font-semibold tracking-[0.18em]">
-                TERAHERTZ
+                DIY FSO TERAHERTZ
               </p>
               <p className="text-muted-foreground text-xs tracking-[0.22em]">
                 FREE-SPACE OPTICAL LINK
@@ -415,7 +436,10 @@ export default function HomePage() {
                   Transmission history
                 </CardTitle>
               </div>
-              <AlertDialog>
+              <AlertDialog
+                open={clearDialogOpen}
+                onOpenChange={setClearDialogOpen}
+              >
                 <AlertDialogTrigger
                   render={
                     <Button variant="outline" disabled={records.length === 0} />
@@ -436,8 +460,14 @@ export default function HomePage() {
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => void clearHistory()}>
-                      Delete history
+                    <AlertDialogAction
+                      disabled={clearingHistory}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        void clearHistory();
+                      }}
+                    >
+                      {clearingHistory ? "Deleting…" : "Delete history"}
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
