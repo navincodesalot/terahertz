@@ -9,6 +9,9 @@
 
 #define RECEIVER_PIN 5
 #define BAUD_RATE 250000
+// Largest image we relay back to the dashboard as base64. Bigger images still
+// report stats, just without the visual (heap + TLS can't hold much more).
+#define IMAGE_RELAY_MAX 49152
 
 // ---------------------------------------------------------------------------
 // Image reassembly state
@@ -22,6 +25,10 @@ static uint32_t receivedImageBytes  = 0;
 static bool     receivingImage      = false;
 static unsigned long imageStartMs   = 0;
 static unsigned long textStartMs    = 0;
+
+// Heap buffer holding the fully decoded image so it can be sent to Vercel.
+static uint8_t* imageData     = nullptr;
+static bool     imageRelayOk  = false;
 
 // ---------------------------------------------------------------------------
 // Telemetry POST — blocking, called once after a complete receive
@@ -78,6 +85,36 @@ static size_t decodeBase64(const String& input, uint8_t* output, size_t limit) {
     }
   }
   return outLen;
+}
+
+// Re-encode the reassembled image so it can travel in the JSON telemetry body.
+static const char B64[] =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static String encodeBase64(const uint8_t* data, size_t length) {
+  String out;
+  out.reserve(((length + 2) / 3) * 4 + 1);
+  size_t i = 0;
+  while (i + 2 < length) {
+    const uint32_t n = ((uint32_t)data[i] << 16) |
+                       ((uint32_t)data[i + 1] << 8) |
+                       (uint32_t)data[i + 2];
+    out += B64[(n >> 18) & 63];
+    out += B64[(n >> 12) & 63];
+    out += B64[(n >> 6) & 63];
+    out += B64[n & 63];
+    i += 3;
+  }
+  if (i < length) {
+    const uint32_t rem = length - i;
+    uint32_t n = (uint32_t)data[i] << 16;
+    if (rem == 2) n |= (uint32_t)data[i + 1] << 8;
+    out += B64[(n >> 18) & 63];
+    out += B64[(n >> 12) & 63];
+    out += (rem == 2) ? B64[(n >> 6) & 63] : '=';
+    out += '=';
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -194,8 +231,20 @@ void loop() {
     receivedImageBytes  = 0;
     receivingImage      = true;
     imageStartMs        = millis();
-    Serial.printf("[IMAGE] START id=%s chunks=%u bytes=%lu\n",
-                  imageId.c_str(), expectedImageChunks, (unsigned long)expectedImageBytes);
+
+    // Allocate a buffer to reassemble the image so it can be relayed to the
+    // dashboard. Oversized images still report stats, just no visual.
+    if (imageData) { free(imageData); imageData = nullptr; }
+    imageRelayOk = false;
+    if (expectedImageBytes > 0 && expectedImageBytes <= IMAGE_RELAY_MAX) {
+      imageData = (uint8_t*)malloc(expectedImageBytes);
+      imageRelayOk = (imageData != nullptr);
+    }
+
+    Serial.printf("[IMAGE] START id=%s chunks=%u bytes=%lu relay=%s\n",
+                  imageId.c_str(), expectedImageChunks,
+                  (unsigned long)expectedImageBytes,
+                  imageRelayOk ? "yes" : "no");
     return;
   }
 
@@ -212,6 +261,8 @@ void loop() {
     if (idEnd < 0 || indexEnd < 0 || crcSep <= indexEnd) {
       Serial.println("[ERROR] Malformed image chunk");
       receivingImage = false;
+      if (imageData) { free(imageData); imageData = nullptr; }
+      imageRelayOk = false;
       return;
     }
 
@@ -224,6 +275,8 @@ void loop() {
     if (expected != actual) {
       Serial.printf("[ERROR] CHUNK CRC fail index=%u\n", index);
       receivingImage = false;
+      if (imageData) { free(imageData); imageData = nullptr; }
+      imageRelayOk = false;
       return;
     }
 
@@ -232,8 +285,14 @@ void loop() {
         receivedImageBytes + decoded > expectedImageBytes) {
       Serial.printf("[ERROR] Bad chunk index=%u expected=%u\n", index, nextImageChunk);
       receivingImage = false;
+      if (imageData) { free(imageData); imageData = nullptr; }
+      imageRelayOk = false;
       return;
     }
+
+    // Copy the decoded bytes into the reassembly buffer at the right offset.
+    if (imageRelayOk && imageData)
+      memcpy(imageData + receivedImageBytes, chunkBuf, decoded);
 
     receivedImageBytes += decoded;
     nextImageChunk     += 1;
@@ -274,8 +333,19 @@ void loop() {
     const uint32_t imgTxMs = (uint32_t)(millis() - imageStartMs);
     doc["transmissionMs"] = imgTxMs;
     doc["bitsPerSecond"]  = (uint32_t)BAUD_RATE;
+
+    // Attach the reassembled image so the dashboard can render what arrived.
+    if (complete && imageRelayOk && imageData) {
+      doc["receivedImageBase64"] = encodeBase64(imageData, receivedImageBytes);
+      Serial.printf("[IMAGE] Relaying %lu bytes to dashboard\n",
+                    (unsigned long)receivedImageBytes);
+    }
+
     String body;
     serializeJson(doc, body);
+
+    if (imageData) { free(imageData); imageData = nullptr; }
+    imageRelayOk   = false;
     receivingImage = false;
     postTelemetry(body);
     return;

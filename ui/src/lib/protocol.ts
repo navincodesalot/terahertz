@@ -86,6 +86,8 @@ export const telemetrySchema = z.object({
   sha256Passed: z.boolean().optional(),
   transmissionMs: z.number().int().nonnegative().optional(),
   bitsPerSecond: z.number().int().nonnegative().optional(),
+  // Base64 of the image as actually reassembled by the receiver.
+  receivedImageBase64: z.string().optional(),
 });
 
 export const messageRecordSchema = z.object({
@@ -110,3 +112,14 @@ export type MessageRecord = z.infer<typeof messageRecordSchema>;
 export function messageKey(id: string) {
   return `${MESSAGE_KEY_PREFIX}${id}`;
 }
+
+export const IMAGE_KEY_PREFIX = "image:" as const;
+
+export function imageKey(id: string) {
+  return `${IMAGE_KEY_PREFIX}${id}`;
+}
+
+export type StoredImage = {
+  mimeType: string;
+  base64: string;
+};

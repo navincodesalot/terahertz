@@ -13,11 +13,25 @@ export async function GET() {
       ids.map((id) => redis.get<MessageRecord>(messageKey(id))),
     );
 
-    return NextResponse.json({
-      records: records.filter(
-        (record): record is MessageRecord => record !== null,
-      ),
-    });
+    const present = records.filter(
+      (record): record is MessageRecord => record !== null,
+    );
+
+    // Relayed image data is large. Only the newest record needs it (that's
+    // what the receive panel renders); strip it from the rest.
+    const trimmed = present.map((record, index) =>
+      index === 0 || !record.telemetry?.receivedImageBase64
+        ? record
+        : {
+            ...record,
+            telemetry: {
+              ...record.telemetry,
+              receivedImageBase64: undefined,
+            },
+          },
+    );
+
+    return NextResponse.json({ records: trimmed });
   } catch (error) {
     console.error("History read failed", error);
     return NextResponse.json(

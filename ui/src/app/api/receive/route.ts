@@ -18,6 +18,7 @@ const receiveSchema = z.object({
   sha256Passed: z.boolean().optional(),
   transmissionMs: z.number().int().nonnegative().optional(),
   bitsPerSecond: z.number().int().nonnegative().optional(),
+  receivedImageBase64: z.string().optional(),
 });
 
 export async function POST(request: Request) {
@@ -63,6 +64,7 @@ export async function POST(request: Request) {
         sha256Passed: parsed.data.sha256Passed,
         transmissionMs: parsed.data.transmissionMs,
         bitsPerSecond: parsed.data.bitsPerSecond,
+        receivedImageBase64: parsed.data.receivedImageBase64,
       },
     };
 

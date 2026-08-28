@@ -69,6 +69,7 @@ type Telemetry = {
   sha256Passed?: boolean;
   transmissionMs?: number;
   bitsPerSecond?: number;
+  receivedImageBase64?: string;
 };
 
 type RecordItem = {
@@ -488,10 +489,21 @@ export default function HomePage() {
                       {latestReceived.telemetry.receivedPayload}
                     </p>
                   ) : latestReceived?.type === "image" ? (
-                    <div className="flex flex-col gap-1">
-                      <p className="text-2xl font-medium">
-                        {latestReceived.mimeType ?? "image"}
-                      </p>
+                    <div className="flex flex-col gap-3">
+                      {latestReceived.telemetry?.receivedImageBase64 ? (
+                        <Image
+                          src={`data:${latestReceived.mimeType ?? "image/png"};base64,${latestReceived.telemetry.receivedImageBase64}`}
+                          alt="Image reassembled by the receiver"
+                          width={640}
+                          height={480}
+                          unoptimized
+                          className="max-h-56 w-auto rounded-md object-contain"
+                        />
+                      ) : (
+                        <p className="text-muted-foreground text-sm">
+                          Image too large to relay — stats only
+                        </p>
+                      )}
                       <p className="text-muted-foreground text-sm">
                         {formatBytes(
                           latestReceived.telemetry?.receivedBytes ??
