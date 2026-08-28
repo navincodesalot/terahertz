@@ -4,32 +4,19 @@ export const COMMAND_CHANNEL = "laser_commands" as const;
 export const MESSAGE_KEY_PREFIX = "message:" as const;
 export const HISTORY_KEY = "transmission_history" as const;
 export const MAX_IMAGE_BYTES = 500 * 1024;
-// A corrupted frame fails the whole image either way, so chunk size only
-// trades per-frame overhead against RAM. 1 KB keeps framing overhead at ~1.5%
-// while staying inside the sender's 2 KB optical payload limit.
+// Keep the JSON/base64 Pub/Sub message comfortably below Arduino-Redis read limits.
 export const IMAGE_CHUNK_BYTES = 1024;
 export const UART_BAUD = 250000;
 export const UART_FORMAT = "8N1";
-export const MAX_TEXT_BYTES = 2048;
 
-export const supportedImageMimeSchema = z.enum([
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/webp",
-]);
+const MAX_TEXT_BYTES = 32 * 1024;
 
 export const sendTextSchema = z.object({
   type: z.literal("text").default("text"),
   payload: z
     .string()
     .min(1, "Payload must not be empty")
-    // The sender measures the UTF-8 encoding, not the character count, and
-    // silently drops anything past its optical payload limit.
-    .refine(
-      (value) => new TextEncoder().encode(value).length <= MAX_TEXT_BYTES,
-      "Payload must be 2 KB or smaller once UTF-8 encoded",
-    ),
+    .max(MAX_TEXT_BYTES, "Payload must be 32 KB or smaller"),
 });
 
 export const textCommandSchema = z.object({
@@ -46,9 +33,9 @@ export const imageStartCommandSchema = z.object({
   id: z.string().min(1),
   type: z.literal("image_start"),
   totalBytes: z.number().int().positive().max(MAX_IMAGE_BYTES),
-  chunkBytes: z.literal(IMAGE_CHUNK_BYTES),
+  chunkBytes: z.number().int().positive(),
   chunkCount: z.number().int().positive(),
-  mimeType: supportedImageMimeSchema,
+  mimeType: z.string().min(1),
   timestamp: z.number().int().nonnegative(),
   transport: z.literal("uart"),
   baud: z.literal(UART_BAUD),
@@ -77,10 +64,19 @@ export const commandSchema = z.discriminatedUnion("type", [
   imageEndCommandSchema,
 ]);
 
-export const messageStatusSchema = z.enum(["publishing", "notified", "failed"]);
+export const messageStatusSchema = z.enum([
+  "queued",
+  "published",
+  "failed",
+  "success",
+]);
 
-const messageRecordBaseSchema = z.object({
+export const messageRecordSchema = z.object({
   id: z.string().min(1),
+  type: z.enum(["text", "image"]),
+  payload: z.string().optional(),
+  fileName: z.string().optional(),
+  mimeType: z.string().optional(),
   inputBytes: z.number().int().nonnegative(),
   status: messageStatusSchema,
   updatedAt: z.number().int().nonnegative(),
@@ -88,23 +84,9 @@ const messageRecordBaseSchema = z.object({
   error: z.string().optional(),
 });
 
-export const messageRecordSchema = z.discriminatedUnion("type", [
-  messageRecordBaseSchema.extend({
-    type: z.literal("text"),
-    payload: z.string(),
-  }),
-  messageRecordBaseSchema.extend({
-    type: z.literal("image"),
-    fileName: z.string(),
-    mimeType: supportedImageMimeSchema,
-    sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
-  }),
-]);
-
 export type TextCommand = z.infer<typeof textCommandSchema>;
 export type Command = z.infer<typeof commandSchema>;
 export type MessageRecord = z.infer<typeof messageRecordSchema>;
-export type SupportedImageMime = z.infer<typeof supportedImageMimeSchema>;
 
 export function messageKey(id: string) {
   return `${MESSAGE_KEY_PREFIX}${id}`;
