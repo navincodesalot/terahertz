@@ -1,12 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getRedis } from "@/lib/redis";
-import {
-  HISTORY_KEY,
-  messageKey,
-  messageRecordSchema,
-  type MessageRecord,
-} from "@/lib/protocol";
+import { HISTORY_KEY, messageKey, type MessageRecord } from "@/lib/protocol";
 
 export const runtime = "nodejs";
 
@@ -19,10 +14,9 @@ export async function GET() {
     );
 
     return NextResponse.json({
-      records: records.flatMap((record) => {
-        const parsed = messageRecordSchema.safeParse(record);
-        return parsed.success ? [parsed.data] : [];
-      }),
+      records: records.filter(
+        (record): record is MessageRecord => record !== null,
+      ),
     });
   } catch (error) {
     console.error("History read failed", error);

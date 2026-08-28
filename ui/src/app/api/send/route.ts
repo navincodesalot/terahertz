@@ -14,58 +14,12 @@ import {
   sendTextSchema,
   type Command,
   type MessageRecord,
-  type SupportedImageMime,
 } from "@/lib/protocol";
 
 export const runtime = "nodejs";
 
-// Bound each Upstash request without pretending API timing represents optical
-// timing. The sender's behavior under a maximum-size burst must be measured.
-const IMAGE_PUBLISH_BATCH_SIZE = 64;
-
-function detectImageMime(bytes: Buffer): SupportedImageMime | null {
-  if (
-    bytes.length >= 8 &&
-    bytes
-      .subarray(0, 8)
-      .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
-  ) {
-    return "image/png";
-  }
-  if (
-    bytes.length >= 3 &&
-    bytes[0] === 0xff &&
-    bytes[1] === 0xd8 &&
-    bytes[2] === 0xff
-  ) {
-    return "image/jpeg";
-  }
-  if (bytes.length >= 6) {
-    const signature = bytes.subarray(0, 6).toString("ascii");
-    if (signature === "GIF87a" || signature === "GIF89a") return "image/gif";
-  }
-  if (
-    bytes.length >= 12 &&
-    bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
-    bytes.subarray(8, 12).toString("ascii") === "WEBP"
-  ) {
-    return "image/webp";
-  }
-  return null;
-}
-
-function listenerCount(result: unknown): number | null {
-  if (typeof result === "number") return result;
-  if (
-    typeof result === "object" &&
-    result !== null &&
-    "result" in result &&
-    typeof result.result === "number"
-  ) {
-    return result.result;
-  }
-  return null;
-}
+const IMAGE_PUBLISH_BATCH_SIZE = 4;
+const IMAGE_PUBLISH_GAP_MS = 25;
 
 async function persistAndPublish(
   commandId: string,
@@ -77,59 +31,46 @@ async function persistAndPublish(
   await redis.set(messageKey(commandId), record);
   await redis.zadd(HISTORY_KEY, { score: timestamp, member: commandId });
 
-  const fail = async (error: string) => {
+  try {
+    const batchSize = commands.length > 1 ? IMAGE_PUBLISH_BATCH_SIZE : 1;
+    for (let start = 0; start < commands.length; start += batchSize) {
+      const pipeline = redis.pipeline();
+      const batch = commands.slice(start, start + batchSize);
+      for (const command of batch) {
+        pipeline.publish(COMMAND_CHANNEL, JSON.stringify(command));
+      }
+      await pipeline.exec();
+      if (start + batchSize < commands.length) {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, IMAGE_PUBLISH_GAP_MS);
+        });
+      }
+    }
+  } catch (error) {
     const failedRecord: MessageRecord = {
       ...record,
       status: "failed",
       updatedAt: Date.now(),
-      error,
+      error: "Command could not be published",
     };
     await redis.set(messageKey(commandId), failedRecord);
-    return { failedRecord };
-  };
-
-  try {
-    for (
-      let start = 0;
-      start < commands.length;
-      start += IMAGE_PUBLISH_BATCH_SIZE
-    ) {
-      const batch = commands.slice(start, start + IMAGE_PUBLISH_BATCH_SIZE);
-      const pipeline = redis.pipeline();
-      for (const command of batch) {
-        pipeline.publish(COMMAND_CHANNEL, JSON.stringify(command));
-      }
-      const results = (await pipeline.exec()) as unknown[];
-      const everyCommandNotified =
-        results.length === batch.length &&
-        results.every((result) => {
-          const count = listenerCount(result);
-          return count !== null && count > 0;
-        });
-      if (!everyCommandNotified) {
-        return await fail(
-          "Sender subscriber was not connected for every published command",
-        );
-      }
-    }
-  } catch (error) {
     console.error("Command publish failed", { id: commandId, error });
-    return await fail("Redis could not publish every command");
+    return { failedRecord };
   }
 
-  const notifiedRecord: MessageRecord = {
+  const publishedRecord: MessageRecord = {
     ...record,
-    status: "notified",
+    status: "published",
     updatedAt: Date.now(),
   };
-  await redis.set(messageKey(commandId), notifiedRecord);
-  console.info("Sender subscriber notified", {
+  await redis.set(messageKey(commandId), publishedRecord);
+  console.info("Command published", {
     channel: COMMAND_CHANNEL,
     id: commandId,
     type: record.type,
     commandCount: commands.length,
   });
-  return { notifiedRecord };
+  return { publishedRecord };
 }
 
 function invalid(error: string, issues?: unknown) {
@@ -163,16 +104,13 @@ async function createTextCommand(request: Request) {
     uart: UART_FORMAT,
   };
   const record: MessageRecord = {
-    id,
-    type: "text",
-    payload: command.payload,
+    ...command,
     inputBytes: Buffer.byteLength(command.payload, "utf8"),
-    status: "publishing",
-    timestamp,
+    status: "queued",
     updatedAt: timestamp,
   };
   const result = await persistAndPublish(id, timestamp, record, [command]);
-  if ("failedRecord" in result) {
+  if ("failedRecord" in result && result.failedRecord) {
     const failedRecord = result.failedRecord;
     return NextResponse.json(
       { error: failedRecord.error, command: failedRecord },
@@ -180,7 +118,7 @@ async function createTextCommand(request: Request) {
     );
   }
   return NextResponse.json(
-    { command: result.notifiedRecord, delivery: "notified" },
+    { command: result.publishedRecord, delivery: "published" },
     { status: 202 },
   );
 }
@@ -190,16 +128,13 @@ async function createImageCommand(request: Request) {
   const value = form.get("file");
   if (!(value instanceof File))
     return invalid("Multipart request must include a file field");
+  if (!value.type.startsWith("image/"))
+    return invalid("Only image files are supported");
   if (value.size < 1 || value.size > MAX_IMAGE_BYTES) {
     return invalid("Image must be between 1 byte and 500 KB");
   }
 
   const bytes = Buffer.from(await value.arrayBuffer());
-  const mimeType = detectImageMime(bytes);
-  if (!mimeType) {
-    return invalid("File signature must be PNG, JPEG, GIF, or WebP");
-  }
-
   const timestamp = Date.now();
   const id = `msg_${randomUUID()}`;
   const chunkCount = Math.ceil(bytes.length / IMAGE_CHUNK_BYTES);
@@ -214,7 +149,7 @@ async function createImageCommand(request: Request) {
       baud: UART_BAUD,
       uart: UART_FORMAT,
       chunkCount,
-      mimeType,
+      mimeType: value.type,
       timestamp,
     },
   ];
@@ -235,15 +170,14 @@ async function createImageCommand(request: Request) {
     id,
     type: "image",
     fileName: value.name,
-    mimeType,
-    sourceSha256: sha256,
+    mimeType: value.type,
     inputBytes: bytes.length,
-    status: "publishing",
+    status: "queued",
     timestamp,
     updatedAt: timestamp,
   };
   const result = await persistAndPublish(id, timestamp, record, commands);
-  if ("failedRecord" in result) {
+  if ("failedRecord" in result && result.failedRecord) {
     const failedRecord = result.failedRecord;
     return NextResponse.json(
       { error: failedRecord.error, command: failedRecord },
@@ -252,8 +186,8 @@ async function createImageCommand(request: Request) {
   }
   return NextResponse.json(
     {
-      command: result.notifiedRecord,
-      delivery: "notified",
+      command: result.publishedRecord,
+      delivery: "published",
       chunks: chunkCount,
     },
     { status: 202 },

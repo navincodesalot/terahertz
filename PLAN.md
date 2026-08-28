@@ -8,7 +8,7 @@ This is the working source of truth for the Phase 2 cloud integration. Update th
 - [x] Use Upstash Redis standard Pub/Sub for the ESP32 command channel.
 - [x] Use the `laser_commands` channel.
 - [x] Keep the ESP32-S3 sender subscribed persistently; do not use polling.
-- [x] Keep the current optical baud at `230400` for now.
+- [x] Keep the current optical baud at `250000` for now.
 - [x] Replace the text-only optical envelope with the shared binary-safe UART frame protocol.
 - [x] Use environment variables for Upstash credentials; never commit secrets.
 - [x] Add firmware integration only after the cloud/application contract is working end-to-end.
@@ -114,7 +114,7 @@ Each phase below must leave the repository in a buildable state and have an expl
 - [x] Parse and validate the Phase 2 command schema within bounded memory.
 - [x] Initially print received commands to USB serial.
 - [x] Then dispatch `type: "text"` to a dedicated optical transmission function.
-- [x] Preserve the current inverted `Serial1`, GPIO 4, `SERIAL_8N1`, and `230400` baud settings.
+- [x] Preserve the current inverted `Serial1`, GPIO 4, `SERIAL_8N1`, and `250000` baud settings.
 - [x] Use binary-safe UART frames with CRC32 for text and image data.
 - [x] Avoid large `String` allocations and unbounded payload buffering on the ESP32.
 
@@ -131,8 +131,6 @@ Each phase below must leave the repository in a buildable state and have an expl
 - [x] Persist completed transmission records in Redis.
 - [x] Correlate receiver telemetry with the original command ID.
 - [ ] Define behavior for checksum failures, duplicate reports, unknown IDs, and late reports.
-
-**Next implementation step:** connect the receiver firmware to this route only after it validates optical frames and correlates image sessions.
 
 **Acceptance:** a valid receiver report updates one transmission record; invalid or unverifiable measurements are not stored as fabricated values.
 
@@ -179,9 +177,7 @@ Each phase below must leave the repository in a buildable state and have an expl
 - [x] Define binary/chunk metadata and checksum strategy.
 - [x] Store or stream chunks without putting a 500 KB base64 image in one ESP32 buffer.
 - [x] Avoid one HTTP request per chunk from the ESP32.
-- [x] Add sender-side streaming of image start/chunk/end frames without buffering the complete image.
-- [x] Add receiver-side frame validation, ordered image reassembly, and SHA-256 verification in the receiver sketch.
-- [ ] Add receiver retry behavior after the local validation path is verified.
+- [ ] Add sender/receiver reassembly and retry behavior.
 - [ ] Add completed-image storage and dashboard rendering.
 
 **Acceptance:** a supported image can be transmitted, reassembled, verified, and displayed without exceeding ESP32 memory constraints.
@@ -207,43 +203,33 @@ Each phase below must leave the repository in a buildable state and have an expl
 
 ## Intentionally deferred
 
-- [ ] Receiver-side image storage and dashboard rendering; local reassembly and SHA-256 verification are implemented but not physically verified.
+- [ ] Receiver-side image reassembly, SHA-256 verification, and image storage.
 - [ ] Any change to the physical circuit.
 - [ ] Authentication/authorization architecture beyond protecting environment secrets.
 - [ ] Browser realtime streaming and progressive physical receive updates.
 - [ ] Redis Streams/job recovery until live Pub/Sub is proven.
-- [ ] Higher baud-rate optimization beyond the current `230400` setting.
+- [ ] Higher baud-rate optimization beyond the current `250000` setting.
 
 ## Current status
-
-The command path is now stable enough to proceed to receiver validation. Keep the sender and receiver at `230400` baud for these integration tests; baud-rate changes belong in Phase 10 after receiver validation. Image data is streamed immediately as each Redis command arrives, not buffered until `image_end`, using 1 KB chunks.
-
-There is no artificial publish pacing. The sender blocks on `Serial1.flush()` after every frame, so it stops reading its Redis socket while the laser is busy and TCP flow control paces the transfer at line rate. Batching in `/api/send` exists only to stay under Upstash's per-request size limit. The earlier fixed 75 ms gap per 512-byte chunk throttled the link to roughly 20% of line rate and pushed large images past the serverless function's duration limit.
-
-The receiver validates and reassembles locally, reporting text and image verification plus measured throughput over USB serial; it does not yet post telemetry to Vercel.
 
 - [x] PRD reviewed.
 - [x] Existing sender and receiver firmware reviewed.
 - [x] Existing Next.js/shadcn application reviewed.
 - [x] ESP32-S3 target confirmed.
-- [x] Current `230400` baud confirmed for now.
-- [x] Firmware adapter implemented for ESP32-S3 and sender hardware-tested; receiver hardware verification remains.
+- [x] Current `250000` baud confirmed for now.
+- [x] Firmware adapter implemented for ESP32-S3; hardware flash/test remains.
 - [x] Phase 0 implementation complete.
 - [x] Phase 1 implementation complete except retry idempotency hardening.
 - [x] Phase 2 server-side contract implemented.
-- [x] Phase 3 sender adapter implemented and verified with live ESP32 Redis subscription, text transmission, and large-image streaming.
-- [x] Phase 4 receive API implemented; receiver firmware integration and physical telemetry verification remain.
+- [x] Phase 3 sender adapter implemented; live hardware verification remains.
+- [x] Phase 4 receive API implemented; physical telemetry verification remains.
 - [x] Phase 5 initial dashboard implemented.
 - [x] Phase 7 history and clear UI implemented.
 - [x] Phase 8 server-side image validation/chunk command generation implemented.
-- [x] Phase 8 sender-side image streaming verified through `image_start`, ordered chunks, and `image_end`.
-- [x] Binary-safe UART frame protocol implemented for text/image frames with per-frame CRC32.
-- [x] Frame protocol v2: preamble, header check byte, payload whitening, and a non-blocking sliding-window receiver parser.
+- [x] Binary-safe UART frame protocol implemented for text/image frames.
 - [x] Arduino sketches reorganized into separate `sender/` and `receiver/` sketch folders.
 - [x] Shared protocol header placed in `firmware/common/`.
-- [x] Flash and verify ESP32-S3 sender over USB serial.
-- [x] Phase 2 persistent ESP32-S3 subscriber verification.
-- [x] Implement receiver-side frame validation, ordered image reassembly, and SHA-256 verification.
-- [ ] Physically verify receiver text/image output over a UART loopback or optical link.
-- [ ] Connect verified receiver telemetry to `/api/receive`.
+- [ ] Flash and verify ESP32-S3 sender over USB serial.
+- [ ] Phase 2 persistent ESP32-S3 subscriber verification.
 - [ ] Phase 6 browser realtime delivery.
+- [ ] Receiver-side image reassembly and SHA-256 verification.

@@ -97,14 +97,14 @@ The previous 100 pF TIA feedback capacitor was reduced to 10 pF because it exces
 * MCP6292 TIA
 * MAX941 comparator
 * Hardware UART
-* 115200 baud = earlier reliability baseline
-* 230400 baud = current cloud-integration setting; now being validated with paced streaming
+* 115200 baud = current reliability baseline
+* 250000 baud = experimentally usable but less reliable
 
-For the current cloud integration, use:
+For cloud integration, initially use:
 
-**230400 baud.**
+**115200 baud.**
 
-Keep this setting fixed while implementing receiver validation. Re-test at 115200 only if the physical optical link proves unreliable; do not change baud and cloud behavior in the same experiment.
+Do not simultaneously optimize the optical bitrate while debugging the cloud system.
 
 ---
 
@@ -132,32 +132,33 @@ The final `true` inverts the UART signal so that the electrical/laser line idles
 
 This is important because an idle-high UART would otherwise leave the laser continuously ON.
 
-The cloud integration uses a shared binary-safe optical frame envelope (version 2):
+The existing optical protocol uses a packet envelope approximately like:
 
 ```text
-[0x55 0x55][magic][version][type][sequence][payload length][CRC32][header check][scrambled payload]
+<PAYLOAD|CHECKSUM>
 ```
 
-The two `0x55` preamble bytes produce a clean square wave that lets an AC-coupled photodiode front end settle before the first real bit.
+Checksum:
 
-The header check byte is a rotate-xor over the preceding twelve header bytes. Without it a single corrupted length byte makes the receiver consume the frames that follow it, turning one bit error into a multi-frame outage.
+```text
+XOR of payload characters
+```
 
-The payload is whitened with a fixed LFSR keystream. Image data contains long runs of `0x00` and `0xFF`; over an inverted UART those runs hold the laser at a 90% or 10% duty cycle, which drags an AC-coupled comparator threshold off centre. Whitening keeps the duty cycle near 50% and costs zero bytes on the wire. Only the payload is scrambled, so the magic bytes stay searchable for resynchronisation.
+formatted as a 2-character hexadecimal value.
 
-The sender emits one frame at a time over the existing inverted hardware UART. The receiver runs a non-blocking sliding-window parser:
+The receiver:
 
-1. shift each incoming byte into a 13-byte window and re-test the header
-2. validate magic, protocol version, frame type, payload length, and header check
-3. read exactly `payload length` bytes, bounded by a payload timeout
-4. descramble, then calculate and compare CRC32
-5. discard corrupt frames without consuming any of the next frame
-6. dispatch valid text/image-start/image-chunk/image-end frames
+1. waits for `<`
+2. receives payload
+3. receives checksum
+4. waits for `>`
+5. calculates its own checksum
+6. compares
+7. accepts only if valid
 
-Because the window advances one byte at a time, a false magic match or a corrupt header costs zero bytes of the following frame.
+The existing sender/receiver firmware already has this physical transmission logic.
 
-CRC32 protects each optical frame and SHA-256 verifies the reassembled image. There is no partial-image tolerance: a CRC failure, sequence gap, or byte overrun fails the whole image session, which then stays quiet until `image_end` reports the result. Repair requires retransmission, which is not implemented.
-
-The cloud layer feeds jobs into this existing hardware UART path rather than changing the laser driver or physical circuit.
+The cloud layer should feed jobs into this existing transmission system rather than replacing it.
 
 ---
 
@@ -255,7 +256,7 @@ Upstash Redis Pub/Sub
 ESP32 Sender
 ```
 
-The command transport is implemented and hardware-tested for text and paced image streaming. The next priority is receiver-side validation and telemetry.
+This is the current development priority.
 
 ---
 
@@ -304,7 +305,7 @@ Realtime event
 Browser
 ```
 
-For browser-side live updates, Upstash Realtime or an equivalent Vercel streaming mechanism may be used. Before enabling this POST path, the receiver will first print and locally verify received text/images over USB serial. The receiver must report success only after frame CRC, ordering, byte count, and image SHA-256 checks pass.
+For browser-side live updates, Upstash Realtime or an equivalent Vercel streaming mechanism may be used.
 
 DO NOT confuse this with the ESP32 command transport.
 
@@ -347,7 +348,7 @@ PUBLISH laser_commands {...}
 
 the Redis server pushes the message through the already-open connection.
 
-The sender should process it immediately, while applying bounded memory use and UART backpressure so Redis delivery does not outrun the physical optical link.
+The ESP32 should immediately process it.
 
 Desired behavior:
 

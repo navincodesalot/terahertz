@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  Check,
   CircleAlert,
   ImagePlus,
   Radio,
@@ -46,8 +47,7 @@ import {
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
-import { MAX_IMAGE_BYTES, MAX_TEXT_BYTES, UART_BAUD } from "@/lib/protocol";
-import { toast } from "sonner";
+import { Progress } from "@/components/ui/progress";
 
 import { Separator } from "@/components/ui/separator";
 import {
@@ -60,20 +60,19 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 
+const MAX_IMAGE_BYTES = 500 * 1024;
+
 type MessageType = "text" | "image";
-type Status = "idle" | "sending" | "notified" | "failed";
+type Status = "idle" | "sending" | "published" | "success" | "failed";
 type RecordItem = {
   id: string;
   type: MessageType;
   payload?: string;
   fileName?: string;
-  mimeType?: string;
-  sourceSha256?: string;
   inputBytes: number;
-  status: "publishing" | "notified" | "failed";
+  status: "queued" | "published" | "failed" | "success";
   timestamp: number;
   updatedAt: number;
-  error?: string;
 };
 
 type SendResult = { command?: RecordItem; error?: string };
@@ -81,8 +80,9 @@ type SendResult = { command?: RecordItem; error?: string };
 const statusCopy: Record<Status, string> = {
   idle: "Ready to transmit",
   sending: "Publishing command",
-  notified: "Sender subscriber notified",
-  failed: "Publication failed",
+  published: "Awaiting receiver",
+  success: "Transmission confirmed",
+  failed: "Transmission failed",
 };
 
 function formatBytes(bytes: number) {
@@ -98,7 +98,7 @@ function formatTime(timestamp: number) {
 }
 
 function statusVariant(status: RecordItem["status"]) {
-  if (status === "notified") return "default" as const;
+  if (status === "success") return "default" as const;
   if (status === "failed") return "destructive" as const;
   return "secondary" as const;
 }
@@ -111,21 +111,17 @@ export default function HomePage() {
   const [status, setStatus] = useState<Status>("idle");
   const [notice, setNotice] = useState("");
   const [popupOpen, setPopupOpen] = useState(false);
-  const [clearDialogOpen, setClearDialogOpen] = useState(false);
-  const [clearingHistory, setClearingHistory] = useState(false);
 
-  const textBytes = new TextEncoder().encode(text).length;
-  const textTooLarge = textBytes > MAX_TEXT_BYTES;
-  const canSend =
-    type === "text" ? text.trim().length > 0 && !textTooLarge : file !== null;
+  const latest = records[0];
+  const canSend = type === "text" ? text.trim().length > 0 : file !== null;
   const fileTooLarge = file !== null && file.size > MAX_IMAGE_BYTES;
   const inputSummary = useMemo(() => {
     if (type === "image")
       return file
         ? `${file.name} · ${formatBytes(file.size)}`
         : "No image selected";
-    return `${textBytes} bytes`;
-  }, [file, textBytes, type]);
+    return `${new TextEncoder().encode(text).length} bytes`;
+  }, [file, text, type]);
 
   useEffect(() => {
     let cancelled = false;
@@ -163,15 +159,13 @@ export default function HomePage() {
     try {
       const response = await request;
       const data = (await response.json()) as SendResult;
-      if (data.command) {
-        setRecords((current) => [
-          data.command!,
-          ...current.filter((item) => item.id !== data.command!.id),
-        ]);
-      }
       if (!response.ok || !data.command)
         throw new Error(data.error ?? "The command could not be published");
-      setStatus("notified");
+      setStatus("published");
+      setRecords((current) => [
+        data.command!,
+        ...current.filter((item) => item.id !== data.command!.id),
+      ]);
       if (type === "text") setText("");
       setFile(null);
     } catch (error) {
@@ -185,26 +179,8 @@ export default function HomePage() {
   }
 
   async function clearHistory() {
-    setClearingHistory(true);
-    try {
-      const response = await fetch("/api/history", { method: "DELETE" });
-      if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as {
-          error?: string;
-        } | null;
-        throw new Error(data?.error ?? "History could not be cleared");
-      }
-
-      setRecords([]);
-      setClearDialogOpen(false);
-      toast.success("Transmission history deleted");
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "History could not be cleared",
-      );
-    } finally {
-      setClearingHistory(false);
-    }
+    const response = await fetch("/api/history", { method: "DELETE" });
+    if (response.ok) setRecords([]);
   }
 
   return (
@@ -217,15 +193,16 @@ export default function HomePage() {
             </div>
             <div>
               <p className="font-heading text-lg font-semibold tracking-[0.18em]">
-                DIY FSO TERAHERTZ
+                TERAHERTZ
               </p>
               <p className="text-muted-foreground text-xs tracking-[0.22em]">
                 FREE-SPACE OPTICAL LINK
               </p>
             </div>
           </div>
-          <Badge variant="outline" className="w-fit">
-            Redis Pub/Sub command transport
+          <Badge variant="outline" className="w-fit gap-2">
+            <span className="bg-primary size-2 rounded-full" /> Cloud command
+            link online
           </Badge>
         </header>
 
@@ -246,8 +223,8 @@ export default function HomePage() {
                 <Send className="text-muted-foreground" />
               </div>
               <CardDescription>
-                Commands are published over Redis to the ESP32-S3 sender when it
-                is connected.
+                Commands are published to the persistent ESP32-S3 subscriber
+                over Redis.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -284,25 +261,18 @@ export default function HomePage() {
                   </div>
                 </Field>
                 {type === "text" ? (
-                  <Field data-invalid={textTooLarge || undefined}>
+                  <Field>
                     <FieldLabel htmlFor="payload">Payload</FieldLabel>
                     <Textarea
                       id="payload"
                       value={text}
-                      aria-invalid={textTooLarge || undefined}
                       onChange={(event) => setText(event.target.value)}
                       placeholder="Enter a message to send through the optical link..."
                       rows={8}
                     />
                     <FieldDescription>
-                      UTF-8 text · maximum {MAX_TEXT_BYTES} bytes per optical
-                      frame.
+                      UTF-8 text · maximum 32 KB at the cloud boundary.
                     </FieldDescription>
-                    {textTooLarge ? (
-                      <p className="text-destructive text-sm">
-                        Text exceeds the {MAX_TEXT_BYTES}-byte UTF-8 limit.
-                      </p>
-                    ) : null}
                   </Field>
                 ) : (
                   <Field>
@@ -323,7 +293,7 @@ export default function HomePage() {
                       <input
                         id="image-upload"
                         type="file"
-                        accept="image/png,image/jpeg,image/gif,image/webp"
+                        accept="image/*"
                         className="sr-only"
                         onChange={(event) =>
                           setFile(event.target.files?.[0] ?? null)
@@ -348,7 +318,7 @@ export default function HomePage() {
             <CardFooter className="flex-col items-stretch gap-4">
               <div className="text-muted-foreground flex items-center justify-between text-xs">
                 <span>{inputSummary}</span>
-                <span className="font-mono">UART · {UART_BAUD} · 8N1</span>
+                <span className="font-mono">UART · 250000 · 8N1</span>
               </div>
               <Button
                 size="lg"
@@ -376,14 +346,18 @@ export default function HomePage() {
                     02 / Receive
                   </CardDescription>
                   <CardTitle className="mt-2 text-2xl">
-                    Receiver results
+                    Received message
                   </CardTitle>
                 </div>
-                <Badge variant="outline">USB serial</Badge>
+                <Badge
+                  variant={latest ? statusVariant(latest.status) : "outline"}
+                >
+                  {latest?.status ?? "waiting"}
+                </Badge>
               </div>
               <CardDescription>
-                Browser receive integration is deferred during optical-link
-                validation.
+                The receiver panel will update when the physical ESP32 reports
+                telemetry.
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-5">
@@ -391,27 +365,26 @@ export default function HomePage() {
                 <p className="text-muted-foreground font-mono text-xs tracking-[0.2em] uppercase">
                   Optical output
                 </p>
-                <div className="flex min-h-40 items-center justify-center p-3 text-center">
-                  <div className="flex max-w-md flex-col gap-3">
-                    <p className="text-lg font-medium">
-                      Read results from the receiver USB serial monitor
-                    </p>
-                    <p className="text-muted-foreground text-sm">
-                      Text status and image SHA-256 verification are reported by
-                      the receiver ESP32, not returned to this website.
-                    </p>
-                  </div>
-                </div>
-                <p className="text-muted-foreground text-sm">
-                  Web history records command publication only; it does not
-                  prove optical delivery.
+                <p className="mt-8 text-2xl leading-relaxed break-words">
+                  {latest?.payload ?? "Waiting for the receiver ESP32..."}
+                </p>
+                <p className="text-muted-foreground mt-8 flex items-center gap-2 text-sm">
+                  {latest ? (
+                    <>
+                      <Check className="text-primary size-4" />
+                      {formatBytes(latest.inputBytes)} received ·{" "}
+                      {formatTime(latest.updatedAt)}
+                    </>
+                  ) : (
+                    "No confirmed optical transmission yet"
+                  )}
                 </p>
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <Card size="sm">
                   <CardContent className="p-3">
                     <p className="text-muted-foreground text-xs">Baud</p>
-                    <p className="mt-1 font-mono font-medium">{UART_BAUD}</p>
+                    <p className="mt-1 font-mono font-medium">250000</p>
                   </CardContent>
                 </Card>
                 <Card size="sm">
@@ -422,8 +395,8 @@ export default function HomePage() {
                 </Card>
                 <Card size="sm">
                   <CardContent className="p-3">
-                    <p className="text-muted-foreground text-xs">Results</p>
-                    <p className="mt-1 font-mono font-medium">Serial</p>
+                    <p className="text-muted-foreground text-xs">Errors</p>
+                    <p className="mt-1 font-mono font-medium">—</p>
                   </CardContent>
                 </Card>
               </div>
@@ -439,16 +412,10 @@ export default function HomePage() {
                   03 / Log
                 </CardDescription>
                 <CardTitle className="mt-2 text-2xl">
-                  Submission history
+                  Transmission history
                 </CardTitle>
-                <CardDescription className="mt-2">
-                  Recent publishing attempts and Redis subscriber notifications.
-                </CardDescription>
               </div>
-              <AlertDialog
-                open={clearDialogOpen}
-                onOpenChange={setClearDialogOpen}
-              >
+              <AlertDialog>
                 <AlertDialogTrigger
                   render={
                     <Button variant="outline" disabled={records.length === 0} />
@@ -469,14 +436,8 @@ export default function HomePage() {
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
-                      disabled={clearingHistory}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        void clearHistory();
-                      }}
-                    >
-                      {clearingHistory ? "Deleting…" : "Delete history"}
+                    <AlertDialogAction onClick={() => void clearHistory()}>
+                      Delete history
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
@@ -548,18 +509,28 @@ export default function HomePage() {
               {statusCopy[status]}
             </DialogTitle>
             <DialogDescription>
-              {status === "notified"
-                ? "Redis reported a connected subscriber for every command. This does not confirm optical delivery; read the result from receiver USB serial."
+              {status === "published"
+                ? "The command is live on Redis Pub/Sub. The receiver will confirm the optical checksum when telemetry is connected."
                 : status === "failed"
                   ? notice
-                  : "Validating, storing, and publishing the command to Redis."}
+                  : "Preparing the command for the persistent optical link."}
             </DialogDescription>
           </DialogHeader>
-          <div className="bg-muted/30 flex flex-col gap-2 rounded-lg border p-4">
-            <p className="text-muted-foreground font-mono text-xs tracking-[0.2em] uppercase">
-              Publication status
-            </p>
-            <p className="font-medium">{statusCopy[status]}</p>
+          <Progress
+            value={
+              status === "sending"
+                ? 30
+                : status === "published"
+                  ? 65
+                  : status === "success"
+                    ? 100
+                    : 0
+            }
+          />
+          <div className="text-muted-foreground flex justify-between text-xs">
+            <span>Queued</span>
+            <span>Published</span>
+            <span>Verified</span>
           </div>
           <DialogClose render={<Button variant="outline" className="w-full" />}>
             <X data-icon="inline-start" />
