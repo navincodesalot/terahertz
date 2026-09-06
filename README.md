@@ -4,9 +4,11 @@ A DIY free-space optical communication system inspired by the laser links used i
 
 It sends real data, including text and images, over a **650 nm laser link** between two ESP32-S3 nodes, with a cloud dashboard for sending data, receiving telemetry, verifying integrity, and visualizing transmission performance.
 
-<!-- DEMO VIDEO -->
+## Demo
 
-https://github.com/user-attachments/assets/DEMO_VIDEO_ID
+[![Demo Video](https://img.shields.io/badge/Watch-Demo-blue?style=for-the-badge)](https://github.com/navincodesalot/terahertz/raw/main/docs/media/terahertz_demo.MOV)
+
+[Download full demo video](https://github.com/navincodesalot/terahertz/raw/main/docs/media/terahertz_demo.MOV)
 
 Detailed documentation and circuit images:
 
