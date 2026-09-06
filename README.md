@@ -53,6 +53,13 @@ A message or image is sent from the dashboard to the transmitter ESP32 through U
 
 The receiver detects the optical signal, reconstructs the data, verifies its integrity, and sends the result and transmission statistics back to the dashboard.
 
+### Performance
+
+- **Throughput**: Up to **0.25 MB/s** (2 Mbps) over free space
+- **Modulation**: 250 kbaud UART with 8-bit frames
+- **Range**: Limited by laser power (5 mW) and photodiode sensitivity; tested at ~1 meter in lab
+- **Reliability**: CRC-32 per-record + SHA-256 end-to-end for image verification
+
 ---
 
 ## Hardware
@@ -81,7 +88,7 @@ The optical link uses the ESP32-S3's hardware UART at **250 kbaud, 8N1 with inve
 
 A lightweight protocol handles text and chunked image transfers, with **CRC-32** for record integrity and **SHA-256** for end-to-end image verification.
 
-The cloud pipeline connects the physical optical link to the web:
+The cloud pipeline connects the physical optical link to the web, with Redis handling pub/sub queueing and the dashboard displaying real-time transmission stats:
 
 ```text
 Dashboard
