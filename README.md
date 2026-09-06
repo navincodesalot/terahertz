@@ -8,7 +8,7 @@ It sends real data, including text and images, over a **650 nm laser link** betw
 
 <p align="center">
   <a href="https://ggl.link/terahertz-demo">
-    <img src="./docs/media/thumbnail.jpg" alt="Terahertz Demo — Play on YouTube" width="720" />
+    <img src="https://img.youtube.com/vi/GarevacOfZU/hqdefault.jpg" alt="Terahertz Demo — Play on YouTube" width="720" />
   </a>
 </p>
 
