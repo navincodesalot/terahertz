@@ -2,7 +2,7 @@
 
 A DIY free-space optical communication system inspired by the laser links used in modern satellite and terrestrial networks like **Starlink** and **Taara**.
 
-It sends real data, including text and images, over a **650 nm laser link** between two ESP32-S3 nodes, with a cloud dashboard for sending data, receiving telemetry, verifying integrity, and visualizing transmission performance.
+It sends real data, including text and images, over a **650 nm laser link** between two ESP32-S3 nodes at **0.25 Mbps**, with a cloud dashboard for sending data, receiving telemetry, verifying integrity, and visualizing transmission performance.
 
 ## Demo
 
@@ -55,7 +55,7 @@ The receiver detects the optical signal, reconstructs the data, verifies its int
 
 ### Performance
 
-- **Throughput**: Up to **0.25 MB/s** (2 Mbps) over free space
+- **Throughput**: Up to **0.25 Mbps** over free space
 - **Modulation**: 250 kbaud UART with 8-bit frames
 - **Range**: Limited by laser power (5 mW) and photodiode sensitivity; tested at ~1 meter in lab
 - **Reliability**: CRC-32 per-record + SHA-256 end-to-end for image verification
