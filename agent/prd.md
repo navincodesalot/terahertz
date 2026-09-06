@@ -584,7 +584,8 @@ Later we can add:
 ```text
 ESP32 reconnects
       ↓
-reports ONLINE
+reports 
+
       ↓
 server checks for pending jobs
       ↓
