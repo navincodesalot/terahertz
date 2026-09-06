@@ -6,10 +6,7 @@ It sends real data, including text and images, over a **650 nm laser link** betw
 
 ## Demo
 
-<video width="100%" controls>
-  <source src="./docs/media/terahertz_demo.MOV" type="video/quicktime">
-  Your browser does not support the video tag.
-</video>
+[![Demo Video](./docs/media/thumbnails/thumbnail-1.jpg)](https://ggl.link/terahertz-demo)
 
 Detailed documentation and circuit images:
 
