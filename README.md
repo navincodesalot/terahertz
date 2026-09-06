@@ -6,13 +6,14 @@ It sends real data, including text and images, over a **650 nm laser link** betw
 
 ## Demo
 
-[![Demo Video](https://img.shields.io/badge/Watch-Demo-blue?style=for-the-badge)](https://github.com/navincodesalot/terahertz/raw/main/docs/media/terahertz_demo.MOV)
-
-[Download full demo video](https://github.com/navincodesalot/terahertz/raw/main/docs/media/terahertz_demo.MOV)
+<video width="100%" controls>
+  <source src="./docs/media/terahertz_demo.MOV" type="video/quicktime">
+  Your browser does not support the video tag.
+</video>
 
 Detailed documentation and circuit images:
 
-* **[Hardware & Circuit Documentation](./docs/hardware_layout.md)** — complete circuit, pinouts, component values, wiring, power, and breadboard replication
+* **[Hardware & Circuit Documentation](./docs/HARDWARE.md)** — complete circuit, pinouts, component values, wiring, power, and breadboard replication
 * **[Software Architecture](./docs/SOFTWARE.md)** — firmware, optical protocol, image transmission, cloud architecture, and dashboard
 * **[Transmitter Image Gallery](./docs/transmitter-gallery.md)** — photos of the transmitter circuit and build
 * **[Receiver Image Gallery](./docs/receiver-gallery.md)** — photos of the receiver circuit and build
@@ -63,7 +64,7 @@ The receiver uses a **BPW34 photodiode**, **MCP6292 transimpedance amplifier**, 
 
 Further images of the receiver circuit and physical build are available in **[Receiver Build & Images](./docs/receiver.md)**.
 
-For the complete circuit, including exact pinouts, resistor and capacitor values, wiring, power, grounding, and breadboard replication, see **[Hardware & Circuit Documentation](./docs/hardware_layout.md)**.
+For the complete circuit, including exact pinouts, resistor and capacitor values, wiring, power, grounding, and breadboard replication, see **[Hardware & Circuit Documentation](./docs/HARDWARE.md)**.
 
 Simplified BOM: https://ggl.link/terahertz-simplified-bom
 
