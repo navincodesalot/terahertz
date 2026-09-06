@@ -6,7 +6,15 @@ It sends real data, including text and images, over a **650 nm laser link** betw
 
 ## Demo
 
-[![Demo Video](./docs/media/thumbnails/thumbnail-1.jpg)](https://ggl.link/terahertz-demo)
+<p align="center">
+  <a href="https://ggl.link/terahertz-demo">
+    <img src="./docs/media/thumbnail.jpg" alt="Terahertz Demo — Play on YouTube" width="720" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://ggl.link/terahertz-demo">Watch on YouTube</a>
+</p>
 
 Detailed documentation and circuit images:
 
